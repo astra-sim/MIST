@@ -1,7 +1,7 @@
-from .MIST_Engine import MISTEngine, EngineMetrics, EngineType
+from .MIST_Client import MISTClient, ClientMetrics, ClientType
 from mist.Scheduler.scheduler import Scheduler, SchedulerConfig, BatchingMethod
 from typing import TYPE_CHECKING, ClassVar, Dict, Iterable, List, Optional
-from mist.Platforms.platforms import PlatformConfig, PlatformType
+from mist.Clusters.clusters import ClusterConfig, ClusterType
 from GenZ import get_configs
 import logging
 logger = logging.getLogger(__name__)
@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import numpy as np
 class Retrieval_Algorithm:
     """
-    Represents the Retrieval Model details for an IVF-PQ based RAG Retrieval Engine.
+    Represents the Retrieval Model details for an IVF-PQ based RAG Retrieval Client.
 
     Parameters:
         D (int): Dimensionality of the query vectors.
@@ -44,7 +44,7 @@ class Retrieval_Algorithm:
 
     def estimate_db_memory_size(self):
         """
-        Estimates the memory size of the retrieval engine in bytes.
+        Estimates the memory size of the retrieval client in bytes.
         """
         ## HNSW Memory Size
         ## 1.1 * (4 * D + 8 * m) * num_vectors * Num_Graphs bytes
@@ -69,7 +69,7 @@ class Retrieval_Algorithm:
         # For PQ, we can tune two parameters:
         # m – Controls the number of partitions to break the vector into. The larger this value is, the better the encoding will approximate the original, at the expense of raising memory consumption.
         # code_size – Controls the number of bits to encode a sub-vector with. The larger this value is, the better the encoding approximates the original, at the expense of raising memory consumption.
-        # The max value is 8, so we kept it constant at 8 as default for all Engines.
+        # The max value is 8, so we kept it constant at 8 as default for all Clients.
 
 
         mem_centroids = self.n_centroids * self.D * 4
@@ -78,9 +78,9 @@ class Retrieval_Algorithm:
 
         return 1.1 * (mem_centroids + mem_PQ_codes + mem_PQ_table) / (2**30)  # Convert to GB
 
-    def compute_IVF_PQ_query_retrieval_time(self, platform, batch_size=1):
+    def compute_IVF_PQ_query_retrieval_time(self, cluster, batch_size=1):
         """
-        Computes the overall compute and memory time for a query using the retrieval engine parameters
+        Computes the overall compute and memory time for a query using the retrieval client parameters
         and the provided hardware profile.
 
         The computation is broken into three steps:
@@ -88,29 +88,29 @@ class Retrieval_Algorithm:
         1. Coarse Quantization (IVF Search)
             - Compute Time: 2 * D * n_centroids / hw.flops
             - Memory Operations:
-            * Read query vector: engine.D * 4 bytes (FP32)
-            * Read centroids: engine.n_centroids * engine.D * 4 bytes (FP32)
-            * Write top n_probe results: engine.n_probe * 8 bytes
+            * Read query vector: client.D * 4 bytes (FP32)
+            * Read centroids: client.n_centroids * client.D * 4 bytes (FP32)
+            * Write top n_probe results: client.n_probe * 8 bytes
                 (assuming each result comprises an index (4 bytes) and a distance (4 bytes))
             Total Memory Time:
-                T_memory_1 = (engine.D*4 + engine.n_centroids*engine.D*4 + engine.n_probe*8) / hw.memory_bw
+                T_memory_1 = (client.D*4 + client.n_centroids*client.D*4 + client.n_probe*8) / hw.memory_bw
 
         2. PQ Distance Computation
-            - Compute Time: engine.M * engine.N_per_cluster / hw.flops
+            - Compute Time: client.M * client.N_per_cluster / hw.flops
             - Memory Operations:
-            * Read PQ codes: engine.N_per_cluster * engine.M bytes (assuming 1 byte per code)
-            * Read PQ lookup table: 256 * engine.D * 4 bytes (since each sub-quantizer covers D/M dims, and total across M equals D)
-            * Write top-k distances: engine.k * 4 bytes
+            * Read PQ codes: client.N_per_cluster * client.M bytes (assuming 1 byte per code)
+            * Read PQ lookup table: 256 * client.D * 4 bytes (since each sub-quantizer covers D/M dims, and total across M equals D)
+            * Write top-k distances: client.k * 4 bytes
             Total Memory Time:
-                T_memory_2 = (engine.N_per_cluster*engine.M + 256*engine.D*4 + engine.k*4) / hw.memory_bw
+                T_memory_2 = (client.N_per_cluster*client.M + 256*client.D*4 + client.k*4) / hw.memory_bw
 
         3. Re-ranking (Exact Distance Computation)
-            - Compute Time: 2 * engine.D * engine.k / hw.flops
+            - Compute Time: 2 * client.D * client.k / hw.flops
             - Memory Operations:
-                * Read full-resolution vectors: engine.k * engine.D * 4 bytes (FP32)
-                * Write sorted results: engine.k * 4 bytes
+                * Read full-resolution vectors: client.k * client.D * 4 bytes (FP32)
+                * Write sorted results: client.k * 4 bytes
             Total Memory Time:
-                T_memory_3 = (engine.k*engine.D*4 + engine.k*4) / hw.memory_bw
+                T_memory_3 = (client.k*client.D*4 + client.k*4) / hw.memory_bw
 
         Returns:
             total_compute_time (float): Total compute time (seconds)
@@ -126,8 +126,8 @@ class Retrieval_Algorithm:
         k = self.k
 
         # Unpack hardware parameters
-        P = platform.get_system_config()['Flops'] * (10**12)         # Total FLOPs per second
-        BW = platform.get_system_config()['Memory_BW'] * (2**30)      # Memory bandwidth in bytes per second
+        P = cluster.get_system_config()['Flops'] * (10**12)         # Total FLOPs per second
+        BW = cluster.get_system_config()['Memory_BW'] * (2**30)      # Memory bandwidth in bytes per second
 
         # --- Per-query computations ---
         # Step 1: Coarse Quantization (IVF Search)
@@ -161,7 +161,7 @@ class Retrieval_Algorithm:
                             batch_size * (T_memory_1_per_query + T_memory_2_per_query + T_memory_3_per_query))
 
         if parallelize_compute_memory:
-            ## We assume maximum fusion in 3 steps of the retrieval engine, hence max of compute time of memory time
+            ## We assume maximum fusion in 3 steps of the retrieval client, hence max of compute time of memory time
             return max(total_compute_time, total_memory_time) * 1000  # Convert to ms
         else:
             # print(f'Compute times : {batch_size * T_compute_1_per_query* 1000} + {batch_size * T_compute_2_per_query* 1000} + {batch_size * T_compute_3_per_query* 1000}')
@@ -169,25 +169,25 @@ class Retrieval_Algorithm:
             return (total_compute_time + total_memory_time) * 1000  # Convert to ms
 
 
-class RAGEngine(MISTEngine):
+class RAGClient(MISTClient):
 
     def __init__(
         self,
-        engine_id:str=None,
-        platform: PlatformConfig = None,
-        separate_retrieval_platform: PlatformConfig = None,
+        client_id:str=None,
+        cluster: ClusterConfig = None,
+        separate_retrieval_cluster: ClusterConfig = None,
         RetrievalAlgo: Retrieval_Algorithm = None,
         EmbeddingModel: str = 'e5_base',
-        engine_types: List[EngineType] = [EngineType.RAG],
+        client_types: List[ClientType] = [ClientType.RAG],
         doc_size: int = 512,
         max_pending_prompt_tokens: int = 8192,
         ) -> None:
 
         super().__init__(
             model=EmbeddingModel,
-            engine_id=engine_id,
-            platform=platform,
-            engine_types=engine_types,
+            client_id=client_id,
+            cluster=cluster,
+            client_types=client_types,
         )
         self.EmbeddingModel = EmbeddingModel
         assert self.EmbeddingModel in ['e5_large', 'e5_base', 'e5_small', 'e5_mistral_7b'], 'Invalid Embedding Model:{self.EmbeddingModel}'
@@ -195,11 +195,11 @@ class RAGEngine(MISTEngine):
         self.RetrievalAlgo.update_D(get_configs(self.EmbeddingModel).hidden_size)
         self.max_pending_prompt_tokens = max_pending_prompt_tokens
         self.doc_size = doc_size
-        if separate_retrieval_platform is not None:
-            self.separate_retrieval_platform = separate_retrieval_platform
+        if separate_retrieval_cluster is not None:
+            self.separate_retrieval_cluster = separate_retrieval_cluster
             self.transfer_BW = 10
         else:
-            self.separate_retrieval_platform = platform
+            self.separate_retrieval_cluster = cluster
             self.transfer_BW = np.inf
 
 
@@ -217,7 +217,7 @@ class RAGEngine(MISTEngine):
                 - Frees the finished sequence groups.
         """
         # if self.current_time > req_step_start_time:
-            # print(f"Engine {self.engine_id} is trying to step back in time. Current time: {self.current_time}, New time: {req_step_start_time}")
+            # print(f"Client {self.client_id} is trying to step back in time. Current time: {self.current_time}, New time: {req_step_start_time}")
         if self.current_time <= req_step_start_time:
             self.current_time = req_step_start_time
         current_batch = []
@@ -225,7 +225,7 @@ class RAGEngine(MISTEngine):
         while self.request_queue:
             ## Push all requests that have arrived by the current time to the scheduler
             if self.request_queue[0][0] <= self.current_time and current_batch_tokens < self.max_pending_prompt_tokens:
-                req_engine_entry_time, req = heapq.heappop(self.request_queue)
+                req_client_entry_time, req = heapq.heappop(self.request_queue)
                 current_batch.append(req)
                 current_batch_tokens += req.input_len
                 req.update_scheduled_time(self.current_time)
@@ -237,10 +237,10 @@ class RAGEngine(MISTEngine):
                 return self.request_queue[0][0], []
 
 
-        embedding_time = self.platform.get_embedding_time(current_batch)
-        ## TODO: If this becomes a requirement, make a separate engine for retrieval
+        embedding_time = self.cluster.get_embedding_time(current_batch)
+        ## TODO: If this becomes a requirement, make a separate client for retrieval
         embedding_transfer_time = sum([req.input_len for req in current_batch]) * self.RetrievalAlgo.D * 4 / (self.transfer_BW * (2**30))
-        retrieval_time = self.RetrievalAlgo.compute_IVF_PQ_query_retrieval_time(self.separate_retrieval_platform, len(current_batch))
+        retrieval_time = self.RetrievalAlgo.compute_IVF_PQ_query_retrieval_time(self.separate_retrieval_cluster, len(current_batch))
 
         for req in current_batch:
             assert req.current_stage.value == "RAG", f"Request {req.request_id} is not in RAG stage, but in {req.current_stage} stage"
@@ -248,20 +248,20 @@ class RAGEngine(MISTEngine):
             req.stage_metrics["RAG"].rag_embedding_end_time = self.current_time + embedding_time
             req.stage_metrics["RAG"].rag_retrieval_start_time = self.current_time + embedding_time + embedding_transfer_time
             req.stage_metrics["RAG"].rag_retrieval_end_time = self.current_time + embedding_time + embedding_transfer_time +  retrieval_time
-            self.logger.log_event(req.request_id, self.engine_id, str(req.current_stage)+"Embed", time=self.current_time,type= "B")
-            self.logger.log_event(req.request_id, self.engine_id, str(req.current_stage)+"Embed", time=self.current_time + embedding_time ,type= "E")
-            self.logger.log_event(req.request_id, self.engine_id, str(req.current_stage)+"Retrieve", time=self.current_time + embedding_time + embedding_transfer_time  ,type= "B")
-            self.logger.log_event(req.request_id, self.engine_id, str(req.current_stage)+"Retrieve", time=self.current_time + embedding_time + embedding_transfer_time + retrieval_time ,type= "E")
+            self.logger.log_event(req.request_id, self.client_id, str(req.current_stage)+"Embed", time=self.current_time,type= "B")
+            self.logger.log_event(req.request_id, self.client_id, str(req.current_stage)+"Embed", time=self.current_time + embedding_time ,type= "E")
+            self.logger.log_event(req.request_id, self.client_id, str(req.current_stage)+"Retrieve", time=self.current_time + embedding_time + embedding_transfer_time  ,type= "B")
+            self.logger.log_event(req.request_id, self.client_id, str(req.current_stage)+"Retrieve", time=self.current_time + embedding_time + embedding_transfer_time + retrieval_time ,type= "E")
 
-        # print(f"Engine {self.engine_id}: Did {len(current_batch)} reqs - Embedding Time: {embedding_time}, Retrieval Time: {retrieval_time}")
+        # print(f"Client {self.client_id}: Did {len(current_batch)} reqs - Embedding Time: {embedding_time}, Retrieval Time: {retrieval_time}")
         self.current_time += embedding_time + retrieval_time + embedding_transfer_time
 
         finished_reqs = current_batch
 
         for req in finished_reqs:
             req.update_rag_context(self.RetrievalAlgo.k * self.doc_size)
-            req.update_engine_exit_time(self.current_time)
-            self.logger.log_event(req.request_id, self.engine_id, "Engine"+str(req.current_stage), time=self.current_time,type= "E")
+            req.update_client_exit_time(self.current_time)
+            self.logger.log_event(req.request_id, self.client_id, "Client"+str(req.current_stage), time=self.current_time,type= "E")
 
         return self.current_time, finished_reqs
 

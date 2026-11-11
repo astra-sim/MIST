@@ -24,17 +24,17 @@ class Stage:
         self.stage_id = stage_id  # Unique ID for each stage instance
         self.stage_type = stage_type
         self.stage_metrics = stage_metrics
-        self.engine_id = -1
+        self.client_id = -1
 
-    def assign_engine(self, engine_id: int, entry_time: float) -> None:
-        """Assign an engine to the stage.
+    def assign_client(self, client_id: int, entry_time: float) -> None:
+        """Assign an client to the stage.
 
         Args:
-            engine_id: The ID of the engine.
-            entry_time: The time when the stage was sent to the engine.
+            client_id: The ID of the client.
+            entry_time: The time when the stage was sent to the client.
         """
-        self.engine_id = engine_id
-        self.stage_metrics.engine_entry_time = entry_time
+        self.client_id = client_id
+        self.stage_metrics.client_entry_time = entry_time
 
     def stage_start(self, current_time: float) -> None:
         """Start the stage.

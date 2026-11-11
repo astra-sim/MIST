@@ -19,7 +19,7 @@ classifiers = [
 ]
 dependencies = [
     # PyPI genz_llm (<=0.0.16) lacks GenZ.power; switch to a version pin once released.
-    "genz_llm @ git+https://github.com/abhibambhaniya/GenZ-LLM-Analyzer.git",
+    "genz_llm @ git+https://github.com/astra-sim/GenZ-LLM-Analyzer.git",
     "numpy",
     "pandas",
     "scipy",
@@ -31,8 +31,8 @@ dependencies = [
 test = ["pytest"]
 
 [project.urls]
-Homepage = "https://github.com/MIST-Simulator/MIST"
-Issues = "https://github.com/MIST-Simulator/MIST/issues"
+Homepage = "https://github.com/astra-sim/MIST"
+Issues = "https://github.com/astra-sim/MIST/issues"
 
 [tool.setuptools.packages.find]
 include = ["mist*"]

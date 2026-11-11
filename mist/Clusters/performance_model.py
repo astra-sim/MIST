@@ -12,7 +12,7 @@ import pandas as pd
 
 from scipy.interpolate import interp1d
 
-from mist.Platforms import PlatformType
+from mist.Clusters import ClusterType
 
 
 performance_model = None

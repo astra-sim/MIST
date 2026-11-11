@@ -155,7 +155,7 @@ class SchedulerState:
     """Metrics to keep track of the scheduler's stastics with time.
 
     Attributes:
-        time : Engine time at which the state is recorded
+        time : Client time at which the state is recorded
         waiting_len: The length of waiting queue
         running_len: The length of running queue
         finished_len: The length of finished queue
@@ -302,10 +302,10 @@ class Scheduler:
             if num_new_tokens > 0:
                 new_kv = self._kv_length_if_scheduled(req)
                 if new_kv > self.scheduler_config.max_batched_kv_size:
-                    # Can never fit on this engine, even alone: drop it instead of
+                    # Can never fit on this client, even alone: drop it instead of
                     # building a batch the cost model cannot place in memory.
                     warnings.warn(
-                        f"For Req ID: {req.request_id}, KV cache ({new_kv} tokens) exceeds the engine's "
+                        f"For Req ID: {req.request_id}, KV cache ({new_kv} tokens) exceeds the client's "
                         f"KV capacity of {self.scheduler_config.max_batched_kv_size} tokens", UserWarning)
                     req.status = RequestStatus.FINISHED_IGNORED
                     self.end_request(req)

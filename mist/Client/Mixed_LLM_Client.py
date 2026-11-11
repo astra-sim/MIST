@@ -1,7 +1,7 @@
-from .MIST_Engine import MISTEngine, EngineMetrics, EngineType
+from .MIST_Client import MISTClient, ClientMetrics, ClientType
 from mist.Scheduler.scheduler import Scheduler, SchedulerConfig, BatchingMethod
 from typing import TYPE_CHECKING, ClassVar, Dict, Iterable, List, Optional
-from mist.Platforms.platforms import PlatformConfig, PlatformType
+from mist.Clusters.clusters import ClusterConfig, ClusterType
 from mist.Request import Request, DataMetrics, RequestMetrics, RequestStage
 import logging
 logger = logging.getLogger(__name__)
@@ -9,26 +9,26 @@ import heapq
 import time
 from mist.Coordinator.global_router import LoadTypes
 
-class LLMEngine(MISTEngine):
+class LLMClient(MISTClient):
 
     def __init__(
         self,
         model: str,
         scheduler_config: SchedulerConfig,
-        engine_id:str=None,
-        platform: PlatformConfig = None,
-        engine_types: List[EngineType] = [EngineType.PREFILL, EngineType.DECODE],
+        client_id:str=None,
+        cluster: ClusterConfig = None,
+        client_types: List[ClientType] = [ClientType.PREFILL, ClientType.DECODE],
         max_pending_prompt_tokens: int = 8192,
         step_size: int = 256,    # Number of tokens to process without recalculating time
-        engine_kv_step_size: int = 32000,  # Number of KV tokens to process without recalculating time
+        client_kv_step_size: int = 32000,  # Number of KV tokens to process without recalculating time
         decode_only_cache: Optional[Dict[int, Dict[int, tuple]]] = None,
         mixed_batch_cache: Optional[Dict[int, Dict[int, tuple]]] = None,
         ) -> None:
         
         
-        platform.update_llm(model)
+        cluster.update_llm(model)
 
-        max_kv_tokens = platform.get_max_kv_tokens()
+        max_kv_tokens = cluster.get_max_kv_tokens()
         scheduler_config.max_batched_kv_size = max_kv_tokens
         if scheduler_config.max_num_batched_tokens > max_kv_tokens:
             logger.warning(f"Warning: max_num_batched_tokens {scheduler_config.max_num_batched_tokens} is greater than max_kv_tokens {max_kv_tokens}. Setting max_num_batched_tokens to max_kv_tokens.")
@@ -38,25 +38,25 @@ class LLMEngine(MISTEngine):
         super().__init__(
             model=model,
             scheduler=Scheduler(scheduler_config),
-            engine_id=engine_id,
-            platform=platform,
-            engine_types=engine_types,
+            client_id=client_id,
+            cluster=cluster,
+            client_types=client_types,
         )
 
 
         ## TODO: Values added for splitwise
         self.max_pending_prompt_tokens = max_pending_prompt_tokens
         self.scheduler.logger = self.logger
-        self.batched_engine = True
+        self.batched_client = True
         self.current_load = 0
         self.current_scheduled = {RequestStage.PREFILL: [], RequestStage.DECODE: []}
 
         dummy_req = Request(input_len=self.scheduler.scheduler_config.chunk_size, output_len=0, request_id="dummy",)
         dummy_req.current_scheduled(dummy_req.get_num_new_tokens(self.scheduler.scheduler_config.batching_method == BatchingMethod.CHUNKED, self.scheduler.scheduler_config.chunk_size))
-        self.prefill_step_time, _ = self.platform.get_chunked_time([dummy_req], [])
+        self.prefill_step_time, _ = self.cluster.get_chunked_time([dummy_req], [])
 
         dummy_req = Request(input_len=self.scheduler.scheduler_config.chunk_size, output_len=0, request_id="dummy", stages=[RequestStage.DECODE])
-        self.per_decode_step, _ = self.platform.get_chunked_time([], [dummy_req])
+        self.per_decode_step, _ = self.cluster.get_chunked_time([], [dummy_req])
         self.current_storage = 0
 
         ## Memory Load tracker
@@ -64,16 +64,16 @@ class LLMEngine(MISTEngine):
 
         ## TEMP
         self.scheduling_time = 0
-        self.platform_time = 0
+        self.cluster_time = 0
 
         ## For faster execution — nested dictionary-based lookup caches
         # _decode_only_cache[num_decodes][sum_decode_kv] = (runtime, energy)
-        # Pass a dict explicitly to share a cache between engines on the same platform.
+        # Pass a dict explicitly to share a cache between clients on the same cluster.
         self._decode_only_cache: Dict[int, Dict[int, tuple]] = {} if decode_only_cache is None else decode_only_cache
         # _mixed_batch_cache[chunk_size][total_kv] = (runtime, energy)
         self._mixed_batch_cache: Dict[int, Dict[int, tuple]] = {} if mixed_batch_cache is None else mixed_batch_cache
-        self.engine_step_size = step_size
-        self.engine_kv_step_size = engine_kv_step_size
+        self.client_step_size = step_size
+        self.client_kv_step_size = client_kv_step_size
     @staticmethod
     def _find_closest_kv(inner_cache: Optional[Dict[int, tuple]], current_kv: int, tolerance: int) -> Optional[tuple]:
         """Find a cached entry where 0 <= current_kv - cached_kv <= tolerance.
@@ -88,7 +88,7 @@ class LLMEngine(MISTEngine):
                     best_key = cached_kv
         return inner_cache[best_key] if best_key is not None else None
 
-    def engine_idle(self) -> bool:
+    def client_idle(self) -> bool:
         if self.request_queue or self.scheduler.has_unfinished_reqs():
             return False
         else:
@@ -108,9 +108,9 @@ class LLMEngine(MISTEngine):
                 - Frees the finished sequence groups.
         """
         if self.current_time > req_step_start_time:
-            raise ValueError(f"Engine {self.engine_id} is ahead of the current time. Engine time: {self.current_time}, Current time: {req_step_start_time}")
-        # if self.engine_id == 1:
-        #     print(f"Engine {self.engine_id}. Current time: {self.current_time}, New time: {req_step_start_time}")
+            raise ValueError(f"Client {self.client_id} is ahead of the current time. Client time: {self.current_time}, Current time: {req_step_start_time}")
+        # if self.client_id == 1:
+        #     print(f"Client {self.client_id}. Current time: {self.current_time}, New time: {req_step_start_time}")
         if self.current_time <= req_step_start_time:
             self.current_time = req_step_start_time
 
@@ -121,7 +121,7 @@ class LLMEngine(MISTEngine):
         while self.request_queue:
             ## Push all requests that have arrived by the current time to the scheduler
             if self.request_queue[0][0] <= self.current_time:
-                req_engine_entry_time, req = heapq.heappop(self.request_queue)
+                req_client_entry_time, req = heapq.heappop(self.request_queue)
                 self.scheduler.add_request(req)
             ## If no requests have arrived by the current time, break and continue to schedule
             elif self.scheduler.has_unfinished_reqs():
@@ -131,13 +131,13 @@ class LLMEngine(MISTEngine):
                 return self.request_queue[0][0], []
 
         sch_time = self.current_time
-        # if self.can_handle_task(EngineType.PREFILL) or self.can_handle_task(EngineType.DECODE):
+        # if self.can_handle_task(ClientType.PREFILL) or self.can_handle_task(ClientType.DECODE):
         start_time = time.time()
         prefills, decodes = self.scheduler.schedule(self.current_time)
         end_time = time.time()
         self.scheduling_time += (end_time - start_time)
         # Check the load of the current schduled requests
-        # Used to update the engine load and engine storage
+        # Used to update the client load and client storage
         dup_reqs = set()
         for req in prefills + decodes:
             dup_reqs.add(req.request_id)
@@ -150,7 +150,7 @@ class LLMEngine(MISTEngine):
                 self.current_load += 1
             else:
                 self.current_load += 0
-            self.logger.log_event(req.request_id, self.engine_id, str(req.current_stage)+str(req.gen_tokens), time=self.current_time,type= "B")
+            self.logger.log_event(req.request_id, self.client_id, str(req.current_stage)+str(req.gen_tokens), time=self.current_time,type= "B")
 
         for req_list in (self.scheduler.waiting, self.scheduler.running):
             for req in req_list:
@@ -165,44 +165,44 @@ class LLMEngine(MISTEngine):
             # Decode-only batch: nested cache[num_decodes][sum_decode_kv]
             n_dec = len(decodes)
             sum_kv = sum(d.get_current_kv_length() for d in decodes)
-            cached = self._find_closest_kv(self._decode_only_cache.get(n_dec), sum_kv, self.engine_step_size * n_dec)
+            cached = self._find_closest_kv(self._decode_only_cache.get(n_dec), sum_kv, self.client_step_size * n_dec)
             if cached is not None:
                 machine_runtime, energy = cached
             else:
-                machine_runtime, energy = self.platform.get_chunked_time(prefills, decodes)
+                machine_runtime, energy = self.cluster.get_chunked_time(prefills, decodes)
                 self._decode_only_cache.setdefault(n_dec, {})[sum_kv] = (machine_runtime, energy)
-                # print(f"Calculating time for engine {self.engine_id=} {self.current_time=}, #Prefills=0, #Decodes={n_dec}, {machine_runtime=}, {sum_kv=}")
+                # print(f"Calculating time for client {self.client_id=} {self.current_time=}, #Prefills=0, #Decodes={n_dec}, {machine_runtime=}, {sum_kv=}")
         else:
             # Mixed or prefill-only batch: nested cache[chunk_size][total_kv]
             chunk_size = sum(p.get_current_chunk_size() for p in prefills) + sum(d.beam_size for d in decodes)
             total_kv = sum(p.get_current_kv_length() for p in prefills) + sum(d.get_current_kv_length() for d in decodes)
-            cached = self._find_closest_kv(self._mixed_batch_cache.get(chunk_size), total_kv, self.engine_kv_step_size)
+            cached = self._find_closest_kv(self._mixed_batch_cache.get(chunk_size), total_kv, self.client_kv_step_size)
             if cached is not None:
                 machine_runtime, energy = cached
             else:
-                machine_runtime, energy = self.platform.get_chunked_time(prefills, decodes)
+                machine_runtime, energy = self.cluster.get_chunked_time(prefills, decodes)
                 self._mixed_batch_cache.setdefault(chunk_size, {})[total_kv] = (machine_runtime, energy)
-                # print(f"Calculating time for engine {self.engine_id=} {self.current_time=}, #Prefills={len(prefills)}, #Decodes={len(decodes)}, {machine_runtime=}, {chunk_size=}, {total_kv=}")
+                # print(f"Calculating time for client {self.client_id=} {self.current_time=}, #Prefills={len(prefills)}, #Decodes={len(decodes)}, {machine_runtime=}, {chunk_size=}, {total_kv=}")
         end_time = time.time()
-        self.platform_time += (end_time - start_time)
+        self.cluster_time += (end_time - start_time)
         self.current_time += machine_runtime
         # self.memory_load.append((machine_runtime, sum([req.get_current_kv_length() + (req.get_current_chunk_size() if req.current_stage == RequestStage.PREFILL else req.beam_size) for req in prefills + decodes]) + sum([req.get_current_kv_length() for req in self.scheduler.running])))
-        # if self.engine_id == 1:
-            # print(f"Engine {self.engine_id} machine time: {machine_runtime}, {[(req.get_current_kv_length(), (req.get_current_chunk_size() if req.current_stage == RequestStage.PREFILL else req.beam_size)) for req in prefills + decodes]}")
+        # if self.client_id == 1:
+            # print(f"Client {self.client_id} machine time: {machine_runtime}, {[(req.get_current_kv_length(), (req.get_current_chunk_size() if req.current_stage == RequestStage.PREFILL else req.beam_size)) for req in prefills + decodes]}")
         self.energy_consumed += energy
         for req in prefills + decodes:
-            self.logger.log_event(req.request_id, self.engine_id, str(req.current_stage)+str(req.gen_tokens), time=self.current_time,type= "E")
+            self.logger.log_event(req.request_id, self.client_id, str(req.current_stage)+str(req.gen_tokens), time=self.current_time,type= "E")
 
         finished_reqs = self.scheduler.process_scheduled(prefills, decodes, sch_time, self.current_time)
 
         for req in finished_reqs:
-            req.update_engine_exit_time(self.current_time)
-            self.logger.log_event(req.request_id, self.engine_id, "Engine"+str(req.current_stage), time=self.current_time,type= "E")
-        # if self.engine_id == 1:
-        #     print(f"Engine end time: {self.current_time}")
+            req.update_client_exit_time(self.current_time)
+            self.logger.log_event(req.request_id, self.client_id, "Client"+str(req.current_stage), time=self.current_time,type= "E")
+        # if self.client_id == 1:
+        #     print(f"Client end time: {self.current_time}")
         return self.current_time, finished_reqs
 
-    # TODO: For splitwise, Return the load of current engine
+    # TODO: For splitwise, Return the load of current client
     # Below is for splitwise
     # def tokens_storage(self, time):
     #     """ 
@@ -252,7 +252,7 @@ class LLMEngine(MISTEngine):
 
     def tokens_load(self, time):
         """ 
-            No need to differentiate Decode and Prefill (because the assignment of Engines) 
+            No need to differentiate Decode and Prefill (because the assignment of Clients) 
             Includes both tokens in the pending queue and also the tokens that already scheduled
         """
         if time < self.current_time:
@@ -268,7 +268,7 @@ class LLMEngine(MISTEngine):
                 # No need for other stage
                 tokens += 0
         return tokens
-    def engine_storage(self, time):
+    def client_storage(self, time):
         """ 
             Similar to tokens_load(), this is used to track the memory storage used 
             for the tokens laod
@@ -362,7 +362,7 @@ class LLMEngine(MISTEngine):
             # print(f"Num Curr Decodes :{len(decodes)}, Decode steps: {max_decode_steps} , per step: {self.per_decode_step}")
 
             tokens = time
-        # print(f"Engine {self.engine_id} load of type {type} at time {time}  = {tokens}")
+        # print(f"Client {self.client_id} load of type {type} at time {time}  = {tokens}")
         return tokens
 
     def check_is_overload(self, time):
@@ -372,8 +372,8 @@ class LLMEngine(MISTEngine):
         return False
     
     def check_is_overload_with_prefill(self, time, request):
-        """ Check the loading status of the engine """
-#        print(f"request: {request.request_id} in engine: {self.engine_id} has load: {self.tokens_load(time)+ request.input_len}")
+        """ Check the loading status of the client """
+#        print(f"request: {request.request_id} in client: {self.client_id} has load: {self.tokens_load(time)+ request.input_len}")
 
         if (self.tokens_load(time)+ request.input_len) > self.max_pending_prompt_tokens:
             
@@ -384,7 +384,7 @@ class LLMEngine(MISTEngine):
     def check_req_stage_existence(self, req_stage:RequestStage):
         """
             Check if the specified request type is existing.
-            Used for Splitwise to move engines type.
+            Used for Splitwise to move clients type.
             For e.g. If req_stage is Prefill, it checks if the request list has Prefill requests.
         """
         for (_,req) in self.request_queue:

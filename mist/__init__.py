@@ -3,13 +3,13 @@ from .Coordinator import (
     MISTCoordinatorDisagg
 )
 
-from .Engine import (
-    MISTEngine,
-    LLMEngine,
-    KVRetrievalEngine,
-    EngineMetrics,
-    EngineType,
-    stage_to_engine_mapping
+from .Client import (
+    MISTClient,
+    LLMClient,
+    KVRetrievalClient,
+    ClientMetrics,
+    ClientType,
+    stage_to_client_mapping
 )
 
 from .Input_requests import (
@@ -23,13 +23,13 @@ from .Input_requests import (
     TraceIngestion
 )
 
-from .Platforms import (
-    PlatformType,
-    PlatformConfig,
+from .Clusters import (
+    ClusterType,
+    ClusterConfig,
     SingleCacheConfig,
     MemoryCacheConfig,
-    vLLMPlatformConfig,
-    TracePlatformConfig,
+    vLLMClusterConfig,
+    TraceClusterConfig,
 )
 
 from .Scheduler import (
@@ -56,3 +56,5 @@ from .Request import (
 from .Tracing import (
     ChromeTracingLogger
 )
+from . import _deprecated
+_deprecated.install()

@@ -1,7 +1,7 @@
-from .MIST_Engine import MISTEngine, EngineMetrics, EngineType
+from .MIST_Client import MISTClient, ClientMetrics, ClientType
 from mist.Scheduler.scheduler import Scheduler, SchedulerConfig, BatchingMethod
 from typing import TYPE_CHECKING, ClassVar, Dict, Iterable, List, Optional
-from mist.Platforms import MemoryCacheConfig
+from mist.Clusters import MemoryCacheConfig
 from mist.Request import Request, DataMetrics, RequestMetrics, RequestStage
 import logging
 logger = logging.getLogger(__name__)
@@ -11,21 +11,21 @@ import math
 import time
 import random
 
-class KVRetrievalEngine(MISTEngine):
+class KVRetrievalClient(MISTClient):
 
     def __init__(
         self,
         model: str,
-        engine_id:str=None,
-        platform: MemoryCacheConfig = None,
-        engine_types: List[EngineType] = [EngineType.CACHE_RETRIEVAL],
+        client_id:str=None,
+        cluster: MemoryCacheConfig = None,
+        client_types: List[ClientType] = [ClientType.CACHE_RETRIEVAL],
         ) -> None:
 
         super().__init__(
             model=model,
-            engine_id=engine_id,
-            platform=platform,
-            engine_types=engine_types,
+            client_id=client_id,
+            cluster=cluster,
+            client_types=client_types,
         )
 
     def get_machine_runtimes(self, requests: List[Request]) -> List[float]:
@@ -40,5 +40,5 @@ class KVRetrievalEngine(MISTEngine):
         """
         req = requests[0]
         # print(f"Getting Machine Runtimes for req:{req.request_id}, {req.input_len}, {req.output_len}, {req.past_context}")
-        retrieval_time = self.platform.get_KV_cache_time(requests)
+        retrieval_time = self.cluster.get_KV_cache_time(requests)
         return retrieval_time

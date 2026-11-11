@@ -7,9 +7,9 @@ os.environ["MIST_CACHE_DIR"] = tempfile.mkdtemp(prefix="mist-test-cache-")
 
 import pytest
 
-from mist import BatchingMethod, LengthVariables, PlatformConfig, PoissonDistribution, SchedulerConfig
+from mist import BatchingMethod, LengthVariables, ClusterConfig, PoissonDistribution, SchedulerConfig
 from mist.Coordinator import MISTCoordinator
-from mist.Engine import EngineType, LLMEngine
+from mist.Client import ClientType, LLMClient
 
 MODEL = "meta-llama/meta-llama-3.1-8b"
 
@@ -24,13 +24,13 @@ def make_queue(seed=0, rps=4, sim_time=3000):
 
 def run_sim(queue, device="H100_GPU", batching=BatchingMethod.CHUNKED, **sched_kwargs):
     coord = MISTCoordinator(deepcopy(queue), logging_file=None)
-    types = [EngineType.PREFILL, EngineType.DECODE]
-    engine = LLMEngine(
-        model=MODEL, engine_types=types,
+    types = [ClientType.PREFILL, ClientType.DECODE]
+    client = LLMClient(
+        model=MODEL, client_types=types,
         scheduler_config=SchedulerConfig(batching_method=batching, chunk_size=512, **sched_kwargs),
-        platform=PlatformConfig(device=device, tensor_parallel_size=1, model=MODEL),
+        cluster=ClusterConfig(device=device, tensor_parallel_size=1, model=MODEL),
     )
-    coord.add_engine(engine, types)
+    coord.add_client(client, types)
     coord.run_sim()
     return coord
 

@@ -45,7 +45,7 @@ class MemoryCacheConfig:
     """Represents a multi-level memory cache configuration.
 
     Args:
-        PlatformConfig (_type_): _description_
+        ClusterConfig (_type_): _description_
     """
 
     def __init__(self,

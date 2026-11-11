@@ -134,7 +134,7 @@ class UniformDistribution(RequestDistributions):
 
 
     def generate_distribution(self, rps: float, sim_time: float) -> None:
-        """Adding Request to the engine in an uniform schedule
+        """Adding Request to the client in an uniform schedule
 
         Args:
             rps (float): Requests per second
@@ -185,7 +185,7 @@ class PoissonDistribution(RequestDistributions):
         self.generate_distribution(rps, sim_time)
 
     def generate_distribution(self, rps: float, sim_time: float) -> None:
-        """Adding Request to the engine in a Poisson distribution schedule
+        """Adding Request to the client in a Poisson distribution schedule
         Args:
             rps (float): Average requests per second
             If this is inf, all requests are sent at time 0. Otherwise, we take
@@ -214,7 +214,7 @@ class NormalDistribution(RequestDistributions):
         self.generate_distribution(rps, sim_time)
 
     def generate_distribution(self, rps: float, sim_time: float) -> None:
-        """Adding Request to the engine in a Normal distribution schedule
+        """Adding Request to the client in a Normal distribution schedule
         Args:
             rps (float): Average requests per second
         Returns:
@@ -249,7 +249,7 @@ class NormalDistribution(RequestDistributions):
 #         self.generate_distribution(rps, sim_time, self.burst_interval)
 
 #     def generate_distribution(self, rps: float, sim_time: float, burst_interval: float=1000) -> None:
-#         """Adding Request to engine in burst every second
+#         """Adding Request to client in burst every second
 #         Args:
 #             rps (float): Average requests per second
 #         Returns:

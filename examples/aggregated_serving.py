@@ -5,9 +5,9 @@ H100 under a Poisson workload.
 """
 from copy import deepcopy
 
-from mist import BatchingMethod, LengthVariables, PlatformConfig, PoissonDistribution, SchedulerConfig
+from mist import BatchingMethod, LengthVariables, ClusterConfig, PoissonDistribution, SchedulerConfig
 from mist.Coordinator import MISTCoordinator
-from mist.Engine import EngineType, LLMEngine
+from mist.Client import ClientType, LLMClient
 
 MODEL = "meta-llama/meta-llama-3.1-8b"
 
@@ -20,13 +20,13 @@ requests = PoissonDistribution(
 
 for batching in (BatchingMethod.CHUNKED, BatchingMethod.CONTINUOUS):
     coordinator = MISTCoordinator(deepcopy(requests), logging_file=None)
-    types = [EngineType.PREFILL, EngineType.DECODE]
-    coordinator.add_engine(
-        LLMEngine(
+    types = [ClientType.PREFILL, ClientType.DECODE]
+    coordinator.add_client(
+        LLMClient(
             model=MODEL,
-            engine_types=types,
+            client_types=types,
             scheduler_config=SchedulerConfig(batching_method=batching, chunk_size=512),
-            platform=PlatformConfig(device="H100_GPU", tensor_parallel_size=1, model=MODEL, bits="bf16"),
+            cluster=ClusterConfig(device="H100_GPU", tensor_parallel_size=1, model=MODEL, bits="bf16"),
         ),
         types,
     )

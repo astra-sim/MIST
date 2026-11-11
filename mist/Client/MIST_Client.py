@@ -9,10 +9,10 @@ import enum
 from mist.Input_requests.Request_inputs import RequestDistributions, UniformDistribution, PoissonDistribution, NormalDistribution
 
 from dataclasses import dataclass, field
-from mist.Platforms.platforms import PlatformConfig, PlatformType
+from mist.Clusters.clusters import ClusterConfig, ClusterType
 
 
-class EngineType(enum.Enum):
+class ClientType(enum.Enum):
     """Status of a sequence."""
     HOST = enum.auto()
     CACHE_RETRIEVAL = enum.auto()
@@ -23,27 +23,27 @@ class EngineType(enum.Enum):
     POSTPROCESS = enum.auto()
     RAG = enum.auto()
 
-def stage_to_engine_mapping(stage: RequestStage):
+def stage_to_client_mapping(stage: RequestStage):
     if stage == RequestStage.INPUT_QUERY or stage == RequestStage.OUTPUT_ANSWER:
-        return EngineType.HOST
+        return ClientType.HOST
     if stage == RequestStage.RAG:
-        return EngineType.RAG
+        return ClientType.RAG
     elif stage == RequestStage.PREPROCESS:
-        return EngineType.PREPROCESS
+        return ClientType.PREPROCESS
     elif stage == RequestStage.PREFILL:
-        return EngineType.PREFILL
+        return ClientType.PREFILL
     elif stage == RequestStage.DECODE:
-        return EngineType.DECODE
+        return ClientType.DECODE
     elif stage == RequestStage.POSTPROCESS:
-        return EngineType.POSTPROCESS
+        return ClientType.POSTPROCESS
     elif stage == RequestStage.CACHE_RETRIEVAL:
-        return EngineType.CACHE_RETRIEVAL
+        return ClientType.CACHE_RETRIEVAL
     else:
-        raise ValueError(f"No engine type found for the stage:{stage}")
+        raise ValueError(f"No client type found for the stage:{stage}")
 
 @dataclass
-class EngineMetrics:
-    """Metrics associated with a Engine.
+class ClientMetrics:
+    """Metrics associated with a Client.
     Note all times are msecs
 
     Attributes:
@@ -100,16 +100,16 @@ class EngineMetrics:
 
 
 
-class MISTEngine:
+class MISTClient:
 
     def __init__(
         self,
         model: str = None,
         scheduler: Scheduler = None,
         sim_duration: float = 1000,
-        engine_id:str=None,
-        platform: PlatformConfig = None,
-        engine_types: List[EngineType] = [EngineType.PREFILL, EngineType.DECODE],
+        client_id:str=None,
+        cluster: ClusterConfig = None,
+        client_types: List[ClientType] = [ClientType.PREFILL, ClientType.DECODE],
         ) -> None:
 
         self.model = model
@@ -119,11 +119,11 @@ class MISTEngine:
         self.current_time = 0
         self.sim_duration = sim_duration    # time of simulation in msecs
         # Create the scheduler.
-        self.platform = platform
-        self.engine_id = engine_id
-        self.engine_types = list(engine_types)
+        self.cluster = cluster
+        self.client_id = client_id
+        self.client_types = list(client_types)
         self.logger = None
-        self.batched_engine = False     # If the engine is batched or not
+        self.batched_client = False     # If the client is batched or not
 
         self.energy_consumed = 0
 
@@ -132,10 +132,10 @@ class MISTEngine:
         request: Request,
         arr_time: float = 0,
     ) -> None:
-        """Add a request to the engine's request pool.
+        """Add a request to the client's request pool.
 
         The request is added to the request pool and will be processed by the
-        scheduler as `engine.step()` is called. The exact scheduling policy is
+        scheduler as `client.step()` is called. The exact scheduling policy is
         determined by the scheduler.
 
         Args:
@@ -149,19 +149,19 @@ class MISTEngine:
 
         """
         ## Req id are used as sorting key for the finished requests
-        # if arr_time < self.current_time and self.batched_engine == True:
-            # raise ValueError(f"Request {request.request_id}-Stage {request.current_stage} had to arrive earlier to Engine:{self.engine_id}, arr_time: {arr_time}, current time: {self.current_time}")
+        # if arr_time < self.current_time and self.batched_client == True:
+            # raise ValueError(f"Request {request.request_id}-Stage {request.current_stage} had to arrive earlier to Client:{self.client_id}, arr_time: {arr_time}, current time: {self.current_time}")
         # else:
-        # if self.engine_id == 1:
-        # print(f"Add Request {request.request_id} to the Engine:{self.engine_id} and to be scheduled at {arr_time}")
-        if stage_to_engine_mapping(request.current_stage) in self.engine_types:
-            self.logger.log_event(request.request_id, self.engine_id, "Engine"+str(request.current_stage), time=arr_time,type= "B")
-            request.update_engine_entry_time(self.engine_id, arr_time)
+        # if self.client_id == 1:
+        # print(f"Add Request {request.request_id} to the Client:{self.client_id} and to be scheduled at {arr_time}")
+        if stage_to_client_mapping(request.current_stage) in self.client_types:
+            self.logger.log_event(request.request_id, self.client_id, "Client"+str(request.current_stage), time=arr_time,type= "B")
+            request.update_client_entry_time(self.client_id, arr_time)
             heapq.heappush(self.request_queue, (arr_time, request))
         else:
-            raise ValueError(f"Request {request.request_id}-Stage {request.current_stage} is not for this engine:{self.engine_id} with type:{self.engine_types}")
+            raise ValueError(f"Request {request.request_id}-Stage {request.current_stage} is not for this client:{self.client_id} with type:{self.client_types}")
 
-    def engine_idle(self) -> bool:
+    def client_idle(self) -> bool:
         if self.request_queue:
             return False
         else:
@@ -184,7 +184,7 @@ class MISTEngine:
         while self.request_queue:
             ## Push all requests that have arrived by the current time to the scheduler
             if self.request_queue[0][0] <= self.current_time:
-                req_engine_entry_time, req = heapq.heappop(self.request_queue)
+                req_client_entry_time, req = heapq.heappop(self.request_queue)
                 current_req_queue.append(req)
             ## If no requests have arrived by the current time.
             # break and continue to schedule
@@ -195,9 +195,9 @@ class MISTEngine:
 
         machine_runtimes = self.get_machine_runtimes(current_req_queue)
         for req, runtime in zip(current_req_queue, machine_runtimes):
-            req_exit_time = req.get_engine_entry_time() + runtime
-            req.update_engine_exit_time(req_exit_time)
-            self.logger.log_event(req.request_id, self.engine_id, "Engine"+str(req.current_stage), time=req_exit_time,type= "E")
+            req_exit_time = req.get_client_entry_time() + runtime
+            req.update_client_exit_time(req_exit_time)
+            self.logger.log_event(req.request_id, self.client_id, "Client"+str(req.current_stage), time=req_exit_time,type= "E")
 
         self.current_time += min(machine_runtimes)
 
@@ -210,8 +210,8 @@ class MISTEngine:
             runtimes.append(10)
         return runtimes
 
-    # TODO: Add the logic to get the engine stats
-    def get_engine_stats(self) -> EngineMetrics:
+    # TODO: Add the logic to get the client stats
+    def get_client_stats(self) -> ClientMetrics:
         sum_TTFT = 0
         sum_TPOT = 0
         sum_queuing_delay = 0
@@ -245,7 +245,7 @@ class MISTEngine:
         T95_latency = e2e_latencies[int(0.95 * num_requests)]
         T99_latency = e2e_latencies[int(0.99 * num_requests)]
 
-        return EngineMetrics(
+        return ClientMetrics(
             TTFT=avg_TTFT,
             TPOT=avg_TPOT,
             queue_delay=avg_queuing_delay,
@@ -257,9 +257,9 @@ class MISTEngine:
             T99_latency=T99_latency,
         )
 
-    def can_handle_task(self, task: EngineType) -> bool:
-        """Check if the engine can handle a specific task."""
-        return task in self.engine_types
+    def can_handle_task(self, task: ClientType) -> bool:
+        """Check if the client can handle a specific task."""
+        return task in self.client_types
 
 class Counter:
 

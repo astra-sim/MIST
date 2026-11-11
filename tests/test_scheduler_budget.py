@@ -35,8 +35,8 @@ def test_batch_size_budget():
 
 def test_budgets_hold_for_every_step_of_a_simulation():
     coord = run_sim(make_queue(rps=20), max_batch_size=4)
-    engine = coord.engines[0]
-    states = engine.scheduler.state_tracker
+    client = coord.clients[0]
+    states = client.scheduler.state_tracker
     assert states, "scheduler never ran"
     assert all(s.prefills_sched + s.decodes_sched <= 4 for s in states)
     assert coord.request_serviced == coord.request_accepted
@@ -78,6 +78,6 @@ def test_request_larger_than_kv_capacity_is_ignored():
 
 def test_kv_budget_holds_through_a_simulation():
     coord = run_sim(make_queue(rps=20), device="A100_40GB_GPU")
-    engine = coord.engines[0]
+    client = coord.clients[0]
     assert coord.request_serviced == coord.request_accepted
-    assert engine.scheduler.scheduler_config.max_batched_kv_size < 1_000_000  # derived from the platform
+    assert client.scheduler.scheduler_config.max_batched_kv_size < 1_000_000  # derived from the cluster

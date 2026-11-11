@@ -1,12 +1,12 @@
 # Contributing to MIST
 
-Bug reports, fixes and new platform/engine models are welcome.
+Bug reports, fixes and new cluster/client models are welcome.
 
 ## Setup
 
 ```sh
 git lfs install
-git clone https://github.com/MIST-Simulator/MIST.git && cd MIST
+git clone https://github.com/astra-sim/MIST.git && cd MIST
 pip install -e ".[test]"
 pytest
 ```
@@ -27,9 +27,9 @@ pytest
 
 ## Adding data
 
-Profiled runtime tables (`mist/Platforms/vllm_runtime_data/*.csv`) are stored
+Profiled runtime tables (`mist/Clusters/vllm_runtime_data/*.csv`) are stored
 in Git LFS, and `.gitattributes` tracks them automatically. Name new tables
-`<Model>_NVIDIA_<GPU>_<TP>.csv` so `vLLMPlatformConfig` can find them.
+`<Model>_NVIDIA_<GPU>_<TP>.csv` so `vLLMClusterConfig` can find them.
 
 ## Reporting bugs
 

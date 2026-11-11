@@ -1,6 +1,6 @@
 from mist.Tracing import ChromeTracingLogger
-from mist.Engine import MISTEngine,EngineType, stage_to_engine_mapping,EngineMetrics
-from mist.Platforms.platforms import PlatformConfig, PlatformType
+from mist.Client import MISTClient,ClientType, stage_to_client_mapping,ClientMetrics
+from mist.Clusters.clusters import ClusterConfig, ClusterType
 from mist.Scheduler.scheduler import Scheduler, SchedulerConfig, BatchingMethod
 from mist.Request import Request, DataMetrics, RequestMetrics, RequestStatus, RequestStage
 from mist.Input_requests.Request_inputs import RequestDistributions, UniformDistribution, PoissonDistribution, NormalDistribution
@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 class EventType(enum.Enum):
     """Status of a sequence."""
-    REQUEST_ARRIVAL = enum.auto()
-    ENGINE_RUN_STEP = enum.auto()
+    STAGE_PUSH = enum.auto()
+    CLIENT_STEP = enum.auto()
 
     def __lt__(self, other):
         return self.value < other.value
@@ -37,13 +37,13 @@ class MISTCoordinator:
 
         self.router_type = router_type
 
-        ## Engine related parameters
-        self.num_total_engines = 0
-        self.engines= []
-        self.engine_matcher = dict()
-        self.engine_active = []
-        self.engine_next_step = dict()
-        self.engine_connection_bw_latency_df = pd.DataFrame()
+        ## Client related parameters
+        self.num_total_clients = 0
+        self.clients= []
+        self.client_matcher = dict()
+        self.client_active = []
+        self.client_next_step = dict()
+        self.client_connection_bw_latency_df = pd.DataFrame()
         self.network_file = network_file
 
         ## Request related parameters
@@ -54,29 +54,29 @@ class MISTCoordinator:
         self.completed_requests = []
 
         ## Simulation related parameters
-        self.engine_sim_queue = []
+        self.client_sim_queue = []
         self.global_time = 0
         self.max_sim_time = max_sim_time
 
         ## Logger
         self.logger = ChromeTracingLogger(logging_file)
 
-    def add_engine(self, engine:MISTEngine, engine_types:List[EngineType]):
+    def add_client(self, client:MISTClient, client_types:List[ClientType]):
         """
-            This function is designed to add an engine to the MIST system
+            This function is designed to add an client to the MIST system
         """
-        engine_id = self.num_total_engines
-        engine.engine_id = engine_id
-        self.engines.append(engine)
-        engine.logger = self.logger
-        for engine_type in engine_types:
-            if engine_type not in self.engine_matcher:
-                self.engine_matcher[engine_type] = []
-            self.engine_matcher[engine_type].append(engine_id)
-        self.num_total_engines += 1
-        self.engine_active.append(False)
-        self.engine_next_step[engine_id] = 0
-        # heapq.heappush(self.engine_sim_queue, (0, engine_id))
+        client_id = self.num_total_clients
+        client.client_id = client_id
+        self.clients.append(client)
+        client.logger = self.logger
+        for client_type in client_types:
+            if client_type not in self.client_matcher:
+                self.client_matcher[client_type] = []
+            self.client_matcher[client_type].append(client_id)
+        self.num_total_clients += 1
+        self.client_active.append(False)
+        self.client_next_step[client_id] = 0
+        # heapq.heappush(self.client_sim_queue, (0, client_id))
 
     def add_request(self, request:Request, time:float):
         """
@@ -84,92 +84,92 @@ class MISTCoordinator:
         """
         request.request_id = self.request_accepted
         self.request_accepted += 1
-        heapq.heappush(self.request_queue, (time, request, self._get_current_engine(request)))
+        heapq.heappush(self.request_queue, (time, request, self._get_current_client(request)))
 
-    def _get_current_engine(self, request: Request):
+    def _get_current_client(self, request: Request):
         """
-            This function is designed to get the current engine based on the request
+            This function is designed to get the current client based on the request
         """
         current_stage = request.current_stage
-        engine_type_required = stage_to_engine_mapping(current_stage)
-        engine_id = self._determine_dst_engine(engine_type_required, request)
-        return engine_id
+        client_type_required = stage_to_client_mapping(current_stage)
+        client_id = self._determine_dst_client(client_type_required, request)
+        return client_id
 
-    def _get_next_engine(self, request: Request):
+    def _get_next_client(self, request: Request):
         """
-            This function is designed to get the next engine based on the request
+            This function is designed to get the next client based on the request
         """
         next_stage = request.get_next_stage()
-        engine_type_required = stage_to_engine_mapping(next_stage)
-        engine_id = self._determine_dst_engine(engine_type_required, request)
-        # print(f"Request {request.request_id} current stage {request.current_stage} next stage {next_stage}, engine type {engine_type_required}, engine {engine_id}")
-        return engine_id
+        client_type_required = stage_to_client_mapping(next_stage)
+        client_id = self._determine_dst_client(client_type_required, request)
+        # print(f"Request {request.request_id} current stage {request.current_stage} next stage {next_stage}, client type {client_type_required}, client {client_id}")
+        return client_id
 
     def run_sim(self):
         """
             This function is designed to simulate the running of the MIST system
         """
-        ## Initialize the DF for engine connection
-        # self.initial_engine_connection_df("network_bw.csv")
+        ## Initialize the DF for client connection
+        # self.initial_client_connection_df("network_bw.csv")
         if isinstance(self.network_file, pd.DataFrame):
-            self.engine_connection_bw_latency_df = self.network_file
+            self.client_connection_bw_latency_df = self.network_file
         elif isinstance(self.network_file, str):
-            self.initial_engine_connection_from_file()
+            self.initial_client_connection_from_file()
         else:
-            self.initial_engine_connection_df()
+            self.initial_client_connection_df()
 
         next_print_time = 1000
 
-        ## Engine initialization might change the first engine for each request
-        ## Determine the first engine for each request
+        ## Client initialization might change the first client for each request
+        ## Determine the first client for each request
         for req_id in range(self.request_accepted):
             self.starting_request_queue[req_id].request_id = req_id
             heapq.heappush(self.event_queue, (self.starting_request_queue[req_id].metrics.arrival_time,
-                                            EventType.REQUEST_ARRIVAL, (self.starting_request_queue[req_id], None)))
+                                            EventType.STAGE_PUSH, (self.starting_request_queue[req_id], None)))
 
-        queued_engine_events = set()
+        queued_client_events = set()
         while (self.event_queue and (self.request_serviced < self.request_accepted) and
             ((self.global_time < self.max_sim_time) or (self.event_queue and self.event_queue[0][0] < self.max_sim_time))):
-            ## Add all the requests to appropriate engines
+            ## Add all the requests to appropriate clients
             # Pop out the event and determine the type
             event_push_time, event_type, event_items = heapq.heappop(self.event_queue)
             # print(f"Global Time {self.global_time}, Next Event Start Time: {event_push_time}, Event Type: {event_type}")
 
-            if (event_type == EventType.REQUEST_ARRIVAL):
-                (cur_req, next_engine_id) = event_items
-                if next_engine_id == None:
-                    ## First engine should be determined only once the req has arrived
-                    next_engine_id = self._get_current_engine(cur_req)
+            if (event_type == EventType.STAGE_PUSH):
+                (cur_req, next_client_id) = event_items
+                if next_client_id == None:
+                    ## First client should be determined only once the req has arrived
+                    next_client_id = self._get_current_client(cur_req)
 
-                request_added_engine_time = self.engines[next_engine_id].current_time
-                if request_added_engine_time < event_push_time:
+                request_added_client_time = self.clients[next_client_id].current_time
+                if request_added_client_time < event_push_time:
                     ##
-                    request_added_engine_time = event_push_time
-                # push the run engine event into the queue
-                req_push_event = (request_added_engine_time, next_engine_id)
-                ## If the engine is active but will be active later, update the sim queue
-                if (self.engine_next_step[next_engine_id] > request_added_engine_time) or self.engines[next_engine_id].engine_idle():
-                    self.engine_next_step[next_engine_id] = request_added_engine_time
-                    # if next_engine_id == 1:
-                    #     print(f"Request added to request queue {next_engine_id} at {request_added_engine_time}")
-                    heapq.heappush(self.event_queue, (request_added_engine_time, EventType.ENGINE_RUN_STEP, req_push_event))
-                    queued_engine_events.add(req_push_event)
+                    request_added_client_time = event_push_time
+                # push the run client event into the queue
+                req_push_event = (request_added_client_time, next_client_id)
+                ## If the client is active but will be active later, update the sim queue
+                if (self.client_next_step[next_client_id] > request_added_client_time) or self.clients[next_client_id].client_idle():
+                    self.client_next_step[next_client_id] = request_added_client_time
+                    # if next_client_id == 1:
+                    #     print(f"Request added to request queue {next_client_id} at {request_added_client_time}")
+                    heapq.heappush(self.event_queue, (request_added_client_time, EventType.CLIENT_STEP, req_push_event))
+                    queued_client_events.add(req_push_event)
 
                 # TODO: Here it uses the event push time but it might have delay between arrival time
                 # and the actual added request time
-                self.engines[next_engine_id].add_request(cur_req, event_push_time)
+                self.clients[next_client_id].add_request(cur_req, event_push_time)
 
-            elif (event_type == EventType.ENGINE_RUN_STEP):
-                (cur_time,engine_id) = event_items
-                if event_items in queued_engine_events:
-                    queued_engine_events.remove(event_items)
+            elif (event_type == EventType.CLIENT_STEP):
+                (cur_time,client_id) = event_items
+                if event_items in queued_client_events:
+                    queued_client_events.remove(event_items)
                 self.global_time = cur_time
-                # print(f"Engine {engine_id} is idle =  {self.engines[engine_id].engine_idle()}")
-                # if self.engines[engine_id].engine_idle() == False:
-                if self.engines[engine_id].engine_idle() == False:
-                    # if engine_id == 1:
-                    #     print(f"Normal Engine {engine_id} step to start at {cur_time}")
-                    engine_step_end_time, req_list = self.engines[engine_id].step(cur_time)
+                # print(f"Client {client_id} is idle =  {self.clients[client_id].client_idle()}")
+                # if self.clients[client_id].client_idle() == False:
+                if self.clients[client_id].client_idle() == False:
+                    # if client_id == 1:
+                    #     print(f"Normal Client {client_id} step to start at {cur_time}")
+                    client_step_end_time, req_list = self.clients[client_id].step(cur_time)
                     self.global_time = cur_time
                 else:
                     continue
@@ -178,42 +178,42 @@ class MISTCoordinator:
                 if self.global_time >= next_print_time:
                     logger.debug(f"Global Time {self.global_time}")
                     next_print_time = (self.global_time // 1000 + 1) * 1000
-                eng_push_event = (engine_step_end_time, engine_id)
-                if self.engines[engine_id].engine_idle() == False:
-                    # if engine_id == 1:
-                    #     print(f"Normal Engine {engine_id} step end at {engine_step_end_time}")
-                    heapq.heappush(self.event_queue, (engine_step_end_time, EventType.ENGINE_RUN_STEP, eng_push_event))
-                    self.engine_next_step[engine_id] = engine_step_end_time
+                eng_push_event = (client_step_end_time, client_id)
+                if self.clients[client_id].client_idle() == False:
+                    # if client_id == 1:
+                    #     print(f"Normal Client {client_id} step end at {client_step_end_time}")
+                    heapq.heappush(self.event_queue, (client_step_end_time, EventType.CLIENT_STEP, eng_push_event))
+                    self.client_next_step[client_id] = client_step_end_time
 
                 # Handling the finished requests list and reinsert them into the event queue as needed
                 if req_list:
                     for req in req_list:
-                        request_engine_exit_time = req.get_engine_exit_time()
-                        # print(f'Req {req.request_id} given out by engine {engine_id} at step end. {req.request_finished()}')
+                        request_client_exit_time = req.get_client_exit_time()
+                        # print(f'Req {req.request_id} given out by client {client_id} at step end. {req.request_finished()}')
                         if req.request_finished():
                             self.request_serviced += 1
-                            req.update_request_finished_time(request_engine_exit_time)
+                            req.update_request_finished_time(request_client_exit_time)
                             self.completed_requests.append(req)
                             # print(f'Req {req.request_id} serviced')
                         else:
-                            next_engine_id = self._get_next_engine(req)
-                            self.logger.log_event(req.request_id, 'Coordinator', str(engine_id)+"->"+str(next_engine_id), time=request_engine_exit_time,type= "B")
-                            movement_time = self._get_move_request_time(req, engine_id, next_engine_id)
-                            self.logger.log_event(req.request_id, 'Coordinator', str(engine_id)+"->"+str(next_engine_id), time=request_engine_exit_time+movement_time,type= "E")
-                            # print(f'Req {req.request_id} pushed to {next_engine_id} at {request_engine_exit_time+movement_time}')
+                            next_client_id = self._get_next_client(req)
+                            self.logger.log_event(req.request_id, 'Coordinator', str(client_id)+"->"+str(next_client_id), time=request_client_exit_time,type= "B")
+                            movement_time = self._get_move_request_time(req, client_id, next_client_id)
+                            self.logger.log_event(req.request_id, 'Coordinator', str(client_id)+"->"+str(next_client_id), time=request_client_exit_time+movement_time,type= "E")
+                            # print(f'Req {req.request_id} pushed to {next_client_id} at {request_client_exit_time+movement_time}')
                             req.current_stage = req.get_next_stage()
-                            # Handle requests that are needed to be reinserted to the engine
-                            req_push_event = (req, next_engine_id)
-                            heapq.heappush(self.event_queue, (request_engine_exit_time+movement_time, EventType.REQUEST_ARRIVAL, req_push_event))
+                            # Handle requests that are needed to be reinserted to the client
+                            req_push_event = (req, next_client_id)
+                            heapq.heappush(self.event_queue, (request_client_exit_time+movement_time, EventType.STAGE_PUSH, req_push_event))
             else:
-                raise ValueError(f"No event type found for the engine:{event_type}")
+                raise ValueError(f"No event type found for the client:{event_type}")
         if self.logger.filename is not None:
             self.logger.save()
         ## Log the completion of the simulation
         self.global_stats = self.get_global_stats()
 
-    # TODO: Add the logic to get the engine stats
-    def get_global_stats(self) -> EngineMetrics:
+    # TODO: Add the logic to get the client stats
+    def get_global_stats(self) -> ClientMetrics:
         sum_TTFT = 0
         total_input = 0
         actual_output_lens = 0
@@ -221,12 +221,12 @@ class MISTCoordinator:
         TTFT_latencies = []          # Keeps track of all the TTFT latencies
 
         request_gen_times = []
-        for engine in self.engines:
-            if EngineType.PREFILL in engine.engine_types or EngineType.DECODE in engine.engine_types:
-                total_input += sum([req.input_len - req.remaining_prefill_tokens for req in engine.scheduler.running])
-                actual_output_lens += sum([req.gen_tokens for req in engine.scheduler.running])
-                request_gen_times.extend([req.data[j].finished_time - req.data[j].scheduled_time for req in engine.scheduler.running for j in range(len(req.data))] )
-                TTFT_latencies.extend([req.data[0].finished_time - req.metrics.arrival_time for req in engine.scheduler.running if len(req.data) > 0])
+        for client in self.clients:
+            if ClientType.PREFILL in client.client_types or ClientType.DECODE in client.client_types:
+                total_input += sum([req.input_len - req.remaining_prefill_tokens for req in client.scheduler.running])
+                actual_output_lens += sum([req.gen_tokens for req in client.scheduler.running])
+                request_gen_times.extend([req.data[j].finished_time - req.data[j].scheduled_time for req in client.scheduler.running for j in range(len(req.data))] )
+                TTFT_latencies.extend([req.data[0].finished_time - req.metrics.arrival_time for req in client.scheduler.running if len(req.data) > 0])
         # request_gen_times = [item for sublist in request_gen_times for item in sublist]
         for i, request in enumerate(self.completed_requests):
             TTFT = (request.data[0].finished_time - request.metrics.arrival_time)
@@ -253,7 +253,7 @@ class MISTCoordinator:
             T95_latency = e2e_latencies[int(0.95 * num_requests)]
             T99_latency = e2e_latencies[int(0.99 * num_requests)]
 
-            return EngineMetrics(
+            return ClientMetrics(
                 TTFT=avg_TTFT,
                 TPOT=avg_TPOT,
                 rps=rps,
@@ -266,7 +266,7 @@ class MISTCoordinator:
                 total_token_throughput=(total_input + actual_output_lens) / (self.global_time/1000),
             )
         else:
-            return EngineMetrics(
+            return ClientMetrics(
                 TTFT=0,
                 TPOT=0,
                 rps=0,
@@ -281,7 +281,7 @@ class MISTCoordinator:
 
 
 
-    def get_heavy_light_split(self, engine_type, req, load_type):
+    def get_heavy_light_split(self, client_type, req, load_type):
         def circular_left_shift(lst, indexes):
             """Perform a circular left shift on the specified indexes of the list."""
             if not indexes:
@@ -294,90 +294,90 @@ class MISTCoordinator:
 
         if req_is_heavy(req, load_type):
             # Circular left shift on even indexes
-            engine_id = self.engine_matcher[engine_type][0]
-            even_indexes = [i for i in range(len(self.engine_matcher[engine_type])) if i % 2 == 0]
-            self.engine_matcher[engine_type] = circular_left_shift(self.engine_matcher[engine_type], even_indexes)
+            client_id = self.client_matcher[client_type][0]
+            even_indexes = [i for i in range(len(self.client_matcher[client_type])) if i % 2 == 0]
+            self.client_matcher[client_type] = circular_left_shift(self.client_matcher[client_type], even_indexes)
         else:
             # Circular left shift on odd indexes
-            engine_id = self.engine_matcher[engine_type][1]
-            odd_indexes = [i for i in range(len(self.engine_matcher[engine_type])) if i % 2 != 0]
-            self.engine_matcher[engine_type] = circular_left_shift(self.engine_matcher[engine_type], odd_indexes)
-        return engine_id
+            client_id = self.client_matcher[client_type][1]
+            odd_indexes = [i for i in range(len(self.client_matcher[client_type])) if i % 2 != 0]
+            self.client_matcher[client_type] = circular_left_shift(self.client_matcher[client_type], odd_indexes)
+        return client_id
 
-    def get_load_balanced_engine(self, engine_type, load_type):
+    def get_load_balanced_client(self, client_type, load_type):
         min_tokens = np.inf
-        engine_id = -1
-        for engine in self.engine_matcher[engine_type]:
-            engine_load = self.engines[engine].get_load(self.global_time, load_type)
-            if  engine_load < min_tokens:
-                min_tokens = engine_load
-                engine_id = engine
-        return engine_id
+        client_id = -1
+        for client in self.client_matcher[client_type]:
+            client_load = self.clients[client].get_load(self.global_time, load_type)
+            if  client_load < min_tokens:
+                min_tokens = client_load
+                client_id = client
+        return client_id
 
     ## Overloadable functions
-    def _determine_dst_engine(self, engine_type:EngineType, request=-1):
+    def _determine_dst_client(self, client_type:ClientType, request=-1):
         """
-            This function is designed to determine the destination engine based on the engine type.
+            This function is designed to determine the destination client based on the client type.
             By default, it uses a round robin policy.
             This function can be overloaded to use different coordinator policies
         """
-        if engine_type in self.engine_matcher:
+        if client_type in self.client_matcher:
             if self.router_type == CoordRouterType.ROUND_ROBIN:
                 ## Round robin policy
-                # Find the least recently used engine_id
+                # Find the least recently used client_id
                 ## If the request has a preference, use that
-                if isinstance(request, Request) and  request.get_engine_preference():
-                    engine_ids_requested = request.get_engine_preference()
-                    engine_id = next((engine for engine in self.engine_matcher[engine_type] if engine in engine_ids_requested), None)
-                    if engine_id is not None:
-                        self.engine_matcher[engine_type].remove(engine_id)
-                    if engine_id is None:
-                        raise ValueError(f"No matching engine found for the requested engine IDs: {engine_ids_requested}")
+                if isinstance(request, Request) and  request.get_client_preference():
+                    client_ids_requested = request.get_client_preference()
+                    client_id = next((client for client in self.client_matcher[client_type] if client in client_ids_requested), None)
+                    if client_id is not None:
+                        self.client_matcher[client_type].remove(client_id)
+                    if client_id is None:
+                        raise ValueError(f"No matching client found for the requested client IDs: {client_ids_requested}")
                 ## Else use the round robin policy
                 else:
-                    engine_id = self.engine_matcher[engine_type].pop(0)
+                    client_id = self.client_matcher[client_type].pop(0)
                 # Rotate the list by 1
-                self.engine_matcher[engine_type].append(engine_id)
+                self.client_matcher[client_type].append(client_id)
             # We assume that the total number of output tokens is known beforehand for the request and we balance the sum of decode tokens on both the model instances.
             elif self.router_type == CoordRouterType.DECODE_BALANCER:
-                ## Find the engine with the least number of decode tokens
-                engine_id = self.get_load_balanced_engine( engine_type, LoadTypes.DECODE_TOKENS)
+                ## Find the client with the least number of decode tokens
+                client_id = self.get_load_balanced_client( client_type, LoadTypes.DECODE_TOKENS)
             # Dedicated half instance for servicing only the heavy-decode requests and other half services only the light-decode requests.
             elif self.router_type == CoordRouterType.DECODE_HEAVY_LIGHT:
-                engine_id = self.get_heavy_light_split( engine_type, request, LoadTypes.DECODE_TOKENS)
+                client_id = self.get_heavy_light_split( client_type, request, LoadTypes.DECODE_TOKENS)
             # Keep number of prefill tokens balanced across all the model instances
             elif self.router_type == CoordRouterType.PREFILL_BALANCER:
-                ## Find the engine with the least number of prefill tokens
-                engine_id = self.get_load_balanced_engine(engine_type, LoadTypes.PREFILL_TOKENS)
+                ## Find the client with the least number of prefill tokens
+                client_id = self.get_load_balanced_client(client_type, LoadTypes.PREFILL_TOKENS)
             # Dedicated instance for heavy prefills and the other for light prefills
             elif self.router_type == CoordRouterType.PREFILL_HEAVY_LIGHT:
-                engine_id = self.get_heavy_light_split(engine_type, request, LoadTypes.PREFILL_TOKENS)
+                client_id = self.get_heavy_light_split(client_type, request, LoadTypes.PREFILL_TOKENS)
             # Keep load balanced across all the model instances
             elif self.router_type == CoordRouterType.CHUNKED_LOAD_BALANCER:
-                engine_id = self.get_load_balanced_engine(engine_type, LoadTypes.TOKEN_PROCESSING)
+                client_id = self.get_load_balanced_client(client_type, LoadTypes.TOKEN_PROCESSING)
             # Dedicated half machines for heavy loads and other half for light loads
             elif self.router_type == CoordRouterType.CHUNKED_HEAVY_LIGHT:
-                engine_id = self.get_heavy_light_split(engine_type, request, LoadTypes.TOKEN_PROCESSING)
+                client_id = self.get_heavy_light_split(client_type, request, LoadTypes.TOKEN_PROCESSING)
             elif self.router_type == CoordRouterType.ORACLE_BALANCER:
-                engine_id = self.get_load_balanced_engine(engine_type, LoadTypes.ORACLE_DECODE)
+                client_id = self.get_load_balanced_client(client_type, LoadTypes.ORACLE_DECODE)
             elif self.router_type == CoordRouterType.RUNTIME_LOAD_BALANCER:
-                engine_id = self.get_load_balanced_engine(engine_type, LoadTypes.SIM_TIME)
+                client_id = self.get_load_balanced_client(client_type, LoadTypes.SIM_TIME)
             else:
                 raise ValueError(f"Invalid router type {self.router}")
-            # print(f"Request {request.request_id}, {request.input_len}/{request.output_len} for {engine_type}: Sent to engine {engine_id}")
-            return engine_id
+            # print(f"Request {request.request_id}, {request.input_len}/{request.output_len} for {client_type}: Sent to client {client_id}")
+            return client_id
         else:
-            raise ValueError(f"No engine type found for the stage:{engine_type}")
+            raise ValueError(f"No client type found for the stage:{client_type}")
 
-    def _update_most_recent_engine(self, engine_type, engine_id):
+    def _update_most_recent_client(self, client_type, client_id):
         """
-            The input includes the engine type and the engine id that was most recently used.
+            The input includes the client type and the client id that was most recently used.
         """
-        assert engine_id != -1 and engine_id is not None, "Invalid engine id to update the most recent used"
+        assert client_id != -1 and client_id is not None, "Invalid client id to update the most recent used"
         # Find the least recently use
-        self.engine_matcher[engine_type].remove(engine_id)
+        self.client_matcher[client_type].remove(client_id)
         # Rotate the list by 1
-        self.engine_matcher[engine_type].append(engine_id)
+        self.client_matcher[client_type].append(client_id)
 
     def compute_bw_latency(self, df: pd.DataFrame, src, dst):
         # Filter the row corresponding to the given src and dst
@@ -397,50 +397,50 @@ class MISTCoordinator:
 
         return total_latency, min_bw
 
-    # TODO: Use this as a movement between engine
-    def _get_move_request_time(self, request, src_engine, dst_engine) -> float:
-        # Get the cost of moving the request from src to dst engine
-        data_size = request.get_data_movement_size(self.engines[dst_engine].model)/2**20   # Convert to MB
-        if src_engine == dst_engine:
+    # TODO: Use this as a movement between client
+    def _get_move_request_time(self, request, src_client, dst_client) -> float:
+        # Get the cost of moving the request from src to dst client
+        data_size = request.get_data_movement_size(self.clients[dst_client].model)/2**20   # Convert to MB
+        if src_client == dst_client:
             # Update the KV Cache Transfer Time
             if request.current_stage == RequestStage.PREFILL:
                 request.metrics.kv_transfer_time = 0
             
             return 0
         else:
-            latency, BW = self.compute_bw_latency(self.engine_connection_bw_latency_df, src_engine, dst_engine)
-            # print(f'Req:{request.request_id}, Src: {src_engine}, Dst: {dst_engine}, Data Size: {data_size}, Latency: {latency}, BW: {BW}')
+            latency, BW = self.compute_bw_latency(self.client_connection_bw_latency_df, src_client, dst_client)
+            # print(f'Req:{request.request_id}, Src: {src_client}, Dst: {dst_client}, Data Size: {data_size}, Latency: {latency}, BW: {BW}')
             if request.current_stage == RequestStage.PREFILL:
                 request.metrics.kv_transfer_time = latency + data_size/BW
             return latency + data_size/BW
 
     ## Overloadable functions
-    def initial_engine_connection_df(self):
-        # Initialize the engine connection dataframe
+    def initial_client_connection_df(self):
+        # Initialize the client connection dataframe
         ## All BWs should be in GB/s and latencies in msec
         data = []
-        for src_engine in range(self.num_total_engines):
-            for dst_engine in range(self.num_total_engines):
-                if src_engine == dst_engine:
-                    data.append([src_engine, dst_engine, 0,  0])
+        for src_client in range(self.num_total_clients):
+            for dst_client in range(self.num_total_clients):
+                if src_client == dst_client:
+                    data.append([src_client, dst_client, 0,  0])
                 else:
-                    data.append([src_engine, dst_engine, 5, 10])
-        self.engine_connection_bw_latency_df = pd.DataFrame(data, columns=['src', 'dst', 'latency(msec)', 'BW(GB/s)'])
+                    data.append([src_client, dst_client, 5, 10])
+        self.client_connection_bw_latency_df = pd.DataFrame(data, columns=['src', 'dst', 'latency(msec)', 'BW(GB/s)'])
 
-    def initial_engine_connection_from_file(self):
+    def initial_client_connection_from_file(self):
         file_name = self.network_file
         if isinstance(file_name, str) and file_name.endswith('.csv'):
             with open(file_name, 'r') as f:
                 network_fields = f.readline().strip()  # First line has names (may have multiple fields for latency)
                 column_names = network_fields.split(',')
-            self.engine_connection_bw_latency_df = pd.read_csv(file_name, skiprows=1, names=column_names)
+            self.client_connection_bw_latency_df = pd.read_csv(file_name, skiprows=1, names=column_names)
         else:
             raise ValueError(f"Invalid file name {file_name}")
 
 
-    def _add_request_to_engine(self, request, engine_id):
+    def _add_request_to_client(self, request, client_id):
         # The arrival time is based on priority time
-        self.engines[engine_id].add_request(request, request.priority_time)
+        self.clients[client_id].add_request(request, request.priority_time)
         None
 
 

@@ -1,4 +1,4 @@
-"""Disaggregated (Splitwise-style) serving: separate prefill and decode engines.
+"""Disaggregated (Splitwise-style) serving: separate prefill and decode clients.
 
 Replays a bundled production-style trace through 2 prefill + 2 decode
 Llama-2-70B replicas (H100 x TP8), including KV-cache transfer between them.
@@ -6,7 +6,7 @@ Llama-2-70B replicas (H100 x TP8), including KV-cache transfer between them.
 from pathlib import Path
 
 import mist
-from mist import PlatformConfig, TraceIngestion
+from mist import ClusterConfig, TraceIngestion
 from mist.Coordinator import MISTCoordinatorDisagg
 
 MODEL = "meta-llama/Llama-2-70B"
@@ -17,13 +17,13 @@ requests = TraceIngestion(ingestion_trace_file=str(TRACE)).request_queue
 coordinator = MISTCoordinatorDisagg(
     request_queue_distr=requests,
     model=MODEL,
-    platform=PlatformConfig(device="H100_GPU", tensor_parallel_size=8, model=MODEL),
-    num_llm_engines=4,
-    num_prefill_engines=2,
-    num_decode_engines=2,
+    cluster=ClusterConfig(device="H100_GPU", tensor_parallel_size=8, model=MODEL),
+    num_llm_clients=4,
+    num_prefill_clients=2,
+    num_decode_clients=2,
     logging_file=None,
 )
-coordinator.initial_engine_connection_df()
+coordinator.initial_client_connection_df()
 coordinator.run_sim()
 
 s = coordinator.get_global_stats()

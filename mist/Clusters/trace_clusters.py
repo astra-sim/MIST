@@ -2,8 +2,8 @@
 import enum
 from typing import TYPE_CHECKING, ClassVar, Dict, Iterable, List, Optional
 from mist.Request import Request, DataMetrics, RequestMetrics
-from mist.Platforms.performance_model import PerformanceModel, SplitwisePerformanceModel
-from mist.Platforms.platforms import PlatformConfig, PlatformType
+from mist.Clusters.performance_model import PerformanceModel, SplitwisePerformanceModel
+from mist.Clusters.clusters import ClusterConfig, ClusterType
 
 import os
 import logging
@@ -11,8 +11,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class TracePlatformConfig(PlatformConfig):
-    """Configuration for distributed Platform.
+class TraceClusterConfig(ClusterConfig):
+    """Configuration for distributed Cluster.
 
     Args:
         device: Either an exisisting system config or making a new custom system
@@ -24,14 +24,14 @@ class TracePlatformConfig(PlatformConfig):
                 device: str = "h100-80gb",
                 tensor_parallel_size: int = 1,
                 pipeline_parallel_size: int = 1,
-                engine_type: Optional[PlatformType] = PlatformType.MIXED_MACHINE,
+                cluster_type: Optional[ClusterType] = ClusterType.MIXED_MACHINE,
                 model: Optional[str] = None,
                 # Give the relative path to the csv file
                 data_path: Optional[str] = "data/perf_model.csv",
                 bits: str = 'bf16',
                 ) -> None:
         super().__init__(device=device, tensor_parallel_size=tensor_parallel_size, 
-                         pipeline_parallel_size=pipeline_parallel_size, engine_type=engine_type, model=model, bits=bits)
+                         pipeline_parallel_size=pipeline_parallel_size, cluster_type=cluster_type, model=model, bits=bits)
         
         current_dir = os.path.dirname(os.path.abspath(__file__))
         data_path = os.path.join(current_dir, data_path)
@@ -45,7 +45,7 @@ class TracePlatformConfig(PlatformConfig):
 
         """
         #TODO: Replace this with API call to the cost models where diff KV size are present
-        if self.engine_type == PlatformType.PREFILL_MACHINE or self.engine_type == PlatformType.DECODE_MACHINE:
+        if self.cluster_type == ClusterType.PREFILL_MACHINE or self.cluster_type == ClusterType.DECODE_MACHINE:
             raise ValueError("Machine should be MIXED to process chunked requests.")
         total_tokens = 0
         batch_size = 0

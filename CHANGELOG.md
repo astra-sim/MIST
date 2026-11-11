@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased — paper naming
+
+Code names now match the SC'26 paper. Results do not change.
+
+| Old | New |
+| --- | --- |
+| `mist.Engine`, `MISTEngine`, `LLMEngine`, `KVRetrievalEngine`, `RAGEngine` | `mist.Client`, `MISTClient`, `LLMClient`, `KVRetrievalClient`, `RAGClient` |
+| `EngineType`, `EngineMetrics`, `stage_to_engine_mapping` | `ClientType`, `ClientMetrics`, `stage_to_client_mapping` |
+| `mist.Platforms`, `PlatformConfig`, `PlatformType`, `vLLMPlatformConfig`, `TracePlatformConfig` | `mist.Clusters`, `ClusterConfig`, `ClusterType`, `vLLMClusterConfig`, `TraceClusterConfig` |
+| `*engine*` / `*platform*` keyword arguments, attributes and methods (`engine_types=`, `platform=`, `num_llm_engines=`, `coordinator.add_engine`, `coordinator.engines`, ...) | `*client*` / `*cluster*` (`client_types=`, `cluster=`, `num_llm_clients=`, `add_client`, `clients`, ...) |
+| `ClusterConfig(engine_type=...)` | `ClusterConfig(cluster_type=...)` |
+| `EventType.REQUEST_ARRIVAL`, `EventType.ENGINE_RUN_STEP` | `EventType.STAGE_PUSH`, `EventType.CLIENT_STEP` |
+| Chrome trace side file `*_engine.json` | `*_client.json` |
+
+The old names (except the internal event names and the trace file name) still
+work for one release and emit a `DeprecationWarning`; they live in
+`mist/_deprecated.py`. Profiled runtime tables moved from
+`mist/Platforms/vllm_runtime_data/` to `mist/Clusters/vllm_runtime_data/`.
+
+MIST now calls ECHELON's `NPU` and `chunked_modeling`, so it needs the
+matching GenZ-LLM-Analyzer revision.
+
 ## 0.1.0 — first public release
 
 Initial open-source release of the simulator previously developed as `GenA`.

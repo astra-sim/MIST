@@ -8,14 +8,14 @@ from sklearn.ensemble import RandomForestRegressor
 import numpy as np
 
 from mist.Request import Request
-from .platforms import PlatformConfig, PlatformType
+from .clusters import ClusterConfig, ClusterType
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class vLLMPlatformConfig(PlatformConfig):
-    """Configuration for vLLM Platform.
+class vLLMClusterConfig(ClusterConfig):
+    """Configuration for vLLM Cluster.
 
     Args:
     """
@@ -28,7 +28,7 @@ class vLLMPlatformConfig(PlatformConfig):
         pipeline_parallel_size: int = 1,
         sys_eff: Optional[float] = 0.75,
         model: Optional[str] = None,
-        engine_type: Optional[PlatformType] = PlatformType.MIXED_MACHINE,
+        cluster_type: Optional[ClusterType] = ClusterType.MIXED_MACHINE,
         chunk_size: Optional[int] = 2048,
         bits: str = 'bf16',
     ) -> None:
@@ -144,12 +144,12 @@ class vLLMPlatformConfig(PlatformConfig):
                 if os.path.exists(base_dir):
                     for files in os.listdir(base_dir):
                         logger.warning(files)
-                logger.warning("Falling back to PlatformConfig.")
+                logger.warning("Falling back to ClusterConfig.")
                 self.use_vllm = False
         else:
             if vllm_df_path is None or not os.path.exists(vllm_df_path):
                 logger.warning(f"vLLM data file not found at {vllm_df_path}")
-                logger.warning("Falling back to PlatformConfig.")
+                logger.warning("Falling back to ClusterConfig.")
                 self.use_vllm = False
 
         super().__init__(
@@ -157,7 +157,7 @@ class vLLMPlatformConfig(PlatformConfig):
             tensor_parallel_size=tensor_parallel_size,
             pipeline_parallel_size=pipeline_parallel_size,
             sys_eff=sys_eff,
-            engine_type=engine_type,
+            cluster_type=cluster_type,
             chunk_size=chunk_size,
             model=model,
             bits=bits,
@@ -216,7 +216,7 @@ class vLLMPlatformConfig(PlatformConfig):
                 self.chunked_df["Time (ms)"],
             )
             logger.info(
-                "vLLM PlatformConfig: Trained RandomForestRegressor models for prefill, decode, and chunked time prediction."
+                "vLLM ClusterConfig: Trained RandomForestRegressor models for prefill, decode, and chunked time prediction."
             )
 
     def get_log_prefix(self) -> str:
@@ -280,8 +280,8 @@ class vLLMPlatformConfig(PlatformConfig):
             return super().get_chunked_time(prefills, decodes)
 
         if (
-            self.engine_type == PlatformType.PREFILL_MACHINE
-            or self.engine_type == PlatformType.DECODE_MACHINE
+            self.cluster_type == ClusterType.PREFILL_MACHINE
+            or self.cluster_type == ClusterType.DECODE_MACHINE
         ):
             raise ValueError("Machine should be MIXED to process chunked requests.")
         total_tokens = 0

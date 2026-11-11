@@ -77,11 +77,11 @@ def get_network_spec(machine_model:str):
 
 
 
-def get_network_bw_between_engines(global_size, network_spec: GPUNetworkSpec, intra_domain_sz:int):
+def get_network_bw_between_clients(global_size, network_spec: GPUNetworkSpec, intra_domain_sz:int):
     data_cols = ['src', 'dst', 'latency(msec)', 'BW(GB/s)']
     data = []
     """
-        Determine the engine level communication bw and latency value for the three tiered hierarchy
+        Determine the client level communication bw and latency value for the three tiered hierarchy
         of network connections
     """
     lowest_connection = NetworkConnectionType.NODE
@@ -99,7 +99,7 @@ def get_network_bw_between_engines(global_size, network_spec: GPUNetworkSpec, in
 
 
     if intra_rack_group <= 1:
-        # This means all the engines should be connected with inter rack
+        # This means all the clients should be connected with inter rack
         lowest_connection = NetworkConnectionType.POD
 
     logger.debug(f"lowest-level connection: {lowest_connection}")
@@ -149,7 +149,7 @@ def get_network_bw_between_engines(global_size, network_spec: GPUNetworkSpec, in
 
 if __name__ == "__main__":
     network_spec = get_network_spec("H100_nvl8")
-    global_size = 16    ## Total number of GPUs = Num Engines * TP
+    global_size = 16    ## Total number of GPUs = Num Clients * TP
 
     # Value used for the already used intra domain parallelization
     intra_domain_sz = 4 # This can also be treated as TP or others
@@ -157,4 +157,4 @@ if __name__ == "__main__":
     # Group the size in the intra-domain
     global_size = math.ceil(global_size / intra_domain_sz)
 
-    get_network_bw_between_engines(global_size, network_spec, intra_domain_sz)
+    get_network_bw_between_clients(global_size, network_spec, intra_domain_sz)

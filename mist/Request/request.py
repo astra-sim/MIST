@@ -95,25 +95,25 @@ class StageMetrics:
     """Metrics associated with a stage of a request.
 
     Attributes:
-        engine_entry_time: The time when the stage was sent to an engine.
+        client_entry_time: The time when the stage was sent to an client.
         scheduled_time: The time when the stage was scheduled.
         finished_time: The time when the stage was finished.
-        engine_exit_time: The time when the stage was finished by the engine.
+        client_exit_time: The time when the stage was finished by the client.
     """
-    engine_id: Optional[int] = None
-    engine_entry_time: Optional[float] = None
+    client_id: Optional[int] = None
+    client_entry_time: Optional[float] = None
     scheduled_time: Optional[float] = None
     finished_time: Optional[float] = None
-    engine_exit_time: Optional[float] = None
+    client_exit_time: Optional[float] = None
 
 @dataclass
 class RagStageMetrics(StageMetrics):
     """Metrics associated with a RAG stage.
 
     Attributes:
-        rag_embedding_start_time: The time when the Embedding was sent to an engine.
+        rag_embedding_start_time: The time when the Embedding was sent to an client.
         rag_embedding_end_time: The time when the Embedding was finished.
-        rag_retrieval_start_time: The time when the Retrieval was sent to an engine.
+        rag_retrieval_start_time: The time when the Retrieval was sent to an client.
         rag_retrieval_end_time: The time when the Retrieval was finished.
     """
     rag_embedding_start_time: Optional[float] = None
@@ -141,7 +141,7 @@ class Request:
         # stages: List[RequestStage] = [RequestStage.PREFILL, RequestStage.DECODE, RequestStage.OUTPUT_ANSWER],
         stages: List[RequestStage] = [RequestStage.PREFILL, RequestStage.DECODE],
         past_context: Optional[int] = 0,
-        engine_preference: Optional[int] = None,
+        client_preference: Optional[int] = None,
     ) -> None:
         ## Set at init time
         self.request_id = request_id
@@ -161,19 +161,19 @@ class Request:
             else:
                 self.stage_metrics[stage_key] = StageMetrics()
 
-        # Adds for tracking the engine assigned for the recorded stages
+        # Adds for tracking the client assigned for the recorded stages
         # For Splitwise and DistServe, it has cases that require this pre-assigned
-        self.engine_assigned_stage = {stage: None for stage in stages}
+        self.client_assigned_stage = {stage: None for stage in stages}
 
         ## Represents the KV cache stored in remote memory or was stored due to APC(Automatic Prefix Caching).
         self.past_context = past_context
-        # For Memory Caches, this is keep track of which engine has the pas KV cache
-        self.engine_preference = engine_preference
+        # For Memory Caches, this is keep track of which client has the pas KV cache
+        self.client_preference = client_preference
 
         ## RAG related variables
         self.RAGContextLength = 0
 
-        ## Update at each engine step
+        ## Update at each client step
         self.data = []
         self.gen_tokens = 0
         self.remaining_prefill_tokens = input_len
@@ -196,12 +196,12 @@ class Request:
     def request_finished(self) -> bool:
         return self.current_stage == self.stages[-1]
 
-    def update_engine_entry_time(self, engine_id, time: float) -> None:
-        self.stage_metrics[self.current_stage.value].engine_id = engine_id
-        self.stage_metrics[self.current_stage.value].engine_entry_time = time
+    def update_client_entry_time(self, client_id, time: float) -> None:
+        self.stage_metrics[self.current_stage.value].client_id = client_id
+        self.stage_metrics[self.current_stage.value].client_entry_time = time
 
-    def get_engine_entry_time(self) -> float:
-        return self.stage_metrics[self.current_stage.value].engine_entry_time
+    def get_client_entry_time(self) -> float:
+        return self.stage_metrics[self.current_stage.value].client_entry_time
 
     def update_scheduled_time(self, time: float) -> None:
         self.stage_metrics[self.current_stage.value].scheduled_time = time
@@ -209,11 +209,11 @@ class Request:
     def update_finished_time(self, time: float) -> None:
         self.stage_metrics[self.current_stage.value].finished_time = time
 
-    def update_engine_exit_time(self, time: float) -> None:
-        self.stage_metrics[self.current_stage.value].engine_exit_time = time
+    def update_client_exit_time(self, time: float) -> None:
+        self.stage_metrics[self.current_stage.value].client_exit_time = time
 
-    def get_engine_exit_time(self) -> float:
-        return self.stage_metrics[self.current_stage.value].engine_exit_time
+    def get_client_exit_time(self) -> float:
+        return self.stage_metrics[self.current_stage.value].client_exit_time
 
     def update_request_finished_time(self, time: float) -> None:
         self.metrics.finished_time = time
@@ -340,5 +340,5 @@ class Request:
         return self.RAGContextLength
 
     ## KV Retrieval related functions
-    def get_engine_preference(self) -> int:
-        return self.engine_preference
+    def get_client_preference(self) -> int:
+        return self.client_preference

@@ -7,7 +7,7 @@ import csv
 import itertools
 import time
 import threading
-from GenZ import chunked_moddeling, ModelConfig, System
+from GenZ import chunked_modeling, ModelConfig, NPU
 from GenZ.power import get_energy
 import pandas as pd
 import ast
@@ -17,13 +17,13 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-class PlatformType(enum.Enum):
+class ClusterType(enum.Enum):
     PREFILL_MACHINE = enum.auto()
     DECODE_MACHINE = enum.auto()
     MIXED_MACHINE = enum.auto()
 
-class PlatformConfig:
-    """Configuration for distributed Platform.
+class ClusterConfig:
+    """Configuration for distributed Cluster.
 
     Args:
         device: Either an existing system config or making a new custom system
@@ -37,7 +37,7 @@ class PlatformConfig:
                 tensor_parallel_size: int = 1,
                 pipeline_parallel_size: int = 1,
                 sys_eff: Optional[float] = 0.75,
-                engine_type: Optional[PlatformType] = PlatformType.MIXED_MACHINE,
+                cluster_type: Optional[ClusterType] = ClusterType.MIXED_MACHINE,
                 chunk_size: Optional[int] = 512,
                 model: Optional[str] = None,
                 beam_merge: Optional[bool] = False,
@@ -50,7 +50,7 @@ class PlatformConfig:
         self.system = None
         self.pipeline_parallel_size = pipeline_parallel_size
         self.tensor_parallel_size = tensor_parallel_size
-        self.engine_type = engine_type
+        self.cluster_type = cluster_type
         self.sys_eff = sys_eff
         self.model = model
         self.beam_merge = beam_merge
@@ -76,7 +76,7 @@ class PlatformConfig:
             self.create_log_file()
 
     def get_max_kv_tokens(self) -> int:
-        model_df, model_summary = chunked_moddeling(
+        model_df, model_summary = chunked_modeling(
             model=self.model,
             prefill_kv_sizes = [],                 # [(prefill_past_kv, num_prefill)],
             decode_kv_sizes =  [1],            # [decode_past_kv]*num_decodes,
@@ -85,7 +85,7 @@ class PlatformConfig:
             system_eff=self.sys_eff,
             tensor_parallel=self.tensor_parallel_size,
             pipeline_parallel=self.pipeline_parallel_size,
-            model_profilling=True
+            model_profiling=True
         ) 
         model_size = model_summary[f'Total Weights (MB)'].values[0] # Per Chip
         kv_cache = model_summary[f'KV Cache (MB)'].values[0]        # Per Chip
@@ -243,13 +243,13 @@ class PlatformConfig:
             Caching strategy (two-level):
             1. In-memory nested dicts (_decode_only_cache / _mixed_batch_cache) are checked
                first — reads are a plain dict lookup with no locks.
-            2. On miss, chunked_moddeling is called and the result is written to both the
+            2. On miss, chunked_modeling is called and the result is written to both the
                in-memory dict and the SQLite DB (persists across runs).
 
             Decode-only key : (n_dec, sum_kv)   — tolerance = decode_step_size * n_dec
             Mixed/prefill   : (chunk_size, total_kv) — tolerance = mixed_kv_step_size
         """
-        if self.engine_type == PlatformType.PREFILL_MACHINE or self.engine_type == PlatformType.DECODE_MACHINE:
+        if self.cluster_type == ClusterType.PREFILL_MACHINE or self.cluster_type == ClusterType.DECODE_MACHINE:
             raise ValueError("Machine should be MIXED to process chunked requests.")
 
         decode_only  = len(prefills) == 0 and len(decodes) > 0
@@ -275,7 +275,7 @@ class PlatformConfig:
                     decode_kv_caches.append((d.beam_size, d.get_current_kv_length()))
 
             try:
-                chunked_output = chunked_moddeling(
+                chunked_output = chunked_modeling(
                     model=self.model,
                     prefill_kv_sizes=[],
                     decode_kv_sizes=decode_kv_caches,
@@ -287,7 +287,7 @@ class PlatformConfig:
                 )
                 used_energy = get_energy(chunked_output['model_df'], self.power, self.power_breakdown)
             except Exception:
-                raise ValueError(f"Error in chunked_moddeling: prefill=[], decode={decode_kv_caches}")
+                raise ValueError(f"Error in chunked_modeling: prefill=[], decode={decode_kv_caches}")
 
             latency = chunked_output['Latency']
             logger.debug("Computed decode-only: n_dec=%s, sum_kv=%s, latency=%.6f", n_dec, sum_kv, latency)
@@ -322,7 +322,7 @@ class PlatformConfig:
                 prefill_kv_caches.append((p.get_current_kv_length(), p.get_current_chunk_size()))
 
             try:
-                chunked_output = chunked_moddeling(
+                chunked_output = chunked_modeling(
                     model=self.model,
                     prefill_kv_sizes=prefill_kv_caches,
                     decode_kv_sizes=decode_kv_caches,
@@ -334,7 +334,7 @@ class PlatformConfig:
                 )
                 used_energy = get_energy(chunked_output['model_df'], self.power, self.power_breakdown)
             except Exception:
-                raise ValueError(f"Error in chunked_moddeling: prefill={prefill_kv_caches}, decode={decode_kv_caches}")
+                raise ValueError(f"Error in chunked_modeling: prefill={prefill_kv_caches}, decode={decode_kv_caches}")
 
             latency = chunked_output['Latency']
             logger.debug("Computed mixed batch: chunk_size=%s, total_kv=%s, latency=%.6f", chunk_size, total_kv, latency)
@@ -362,7 +362,7 @@ class PlatformConfig:
 
         # print("Total Tokens: ", total_tokens, self.model, prefill_kv_caches, decode_kv_caches)
 
-        chunked_output = chunked_moddeling(model = self.model,
+        chunked_output = chunked_modeling(model = self.model,
                                     prefill_kv_sizes = prefill_kv_caches,
                                     decode_kv_sizes = [],
                                     system_name = self.get_system_config(), bits = self.bits,
@@ -383,7 +383,7 @@ class PlatformConfig:
         if self.device in ["a100_sxm", "cerebras_cs3", "groq_lpx", "l40s", "mi355x",
                             "b200_sxm", "gb200", "h100_sxm", "mi300x", "tpu_v6e",
                             "b60", "gb300", "h200_sxm", "mi350x", "tpu_v7", "etched"]:
-            self.system = System(system_name=self.device, compute_engine = "profiled-ops", bits = self.bits, collective_strategy="profiled-ops")
+            self.system = NPU(system_name=self.device, compute_engine = "profiled-ops", bits = self.bits, collective_strategy="profiled-ops")
             return  self.system
         if self.device == "H100_GPU" or self.device == "Real_H100_GPU" or self.device == "H100":
             return {'Flops': 989, 'Memory_size': 80, 'Memory_BW': 3400, 'ICN': 450 , 'real_values':True}
