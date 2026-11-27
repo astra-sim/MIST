@@ -8,6 +8,13 @@
   instead of the analytical link model. Default behaviour does not change.
   See `docs/astrasim.md`.
 
+### Changes that alter results
+
+- Finite runs admit only events before `max_sim_time`. Client steps that
+  started earlier still count through completion. Throughput includes work
+  from partially processed requests and uses the latest processed event or
+  work completion.
+
 ## Unreleased — paper naming
 
 Code names now match the SC'26 paper. Results do not change.

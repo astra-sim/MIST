@@ -6,6 +6,7 @@ from mist.Request import Request, DataMetrics, RequestMetrics, RequestStatus, Re
 from mist.Input_requests.Request_inputs import RequestDistributions, UniformDistribution, PoissonDistribution, NormalDistribution
 from typing import TYPE_CHECKING, ClassVar, Dict, Iterable, List, Optional
 import heapq
+from itertools import chain
 from uuid import uuid4
 import pandas as pd
 import numpy as np
@@ -65,11 +66,13 @@ class MISTCoordinator:
         self.event_queue = []
         self.request_serviced = 0
         self.completed_requests = []
+        self._active_requests: dict[int, Request] = {}
 
         ## Simulation related parameters
         self.client_sim_queue = []
         self.global_time = 0
-        self.max_sim_time = max_sim_time
+        self.max_sim_time = np.inf if max_sim_time is None else max_sim_time
+        self._last_event_time = 0
 
         ## Logger
         self.logger = ChromeTracingLogger(logging_file)
@@ -119,8 +122,10 @@ class MISTCoordinator:
         return client_id
 
     def run_sim(self):
-        """
-            This function is designed to simulate the running of the MIST system
+        """Process events before the cutoff and count work from steps already started.
+
+        Client steps run synchronously. A step admitted before `max_sim_time`
+        can finish after it, without admitting the next event.
         """
         ## Initialize the DF for client connection
         # self.initial_client_connection_df("network_bw.csv")
@@ -144,11 +149,15 @@ class MISTCoordinator:
                                             EventType.STAGE_PUSH, (self.starting_request_queue[req_id], None)))
 
         queued_client_events = set()
-        while (self.event_queue and (self.request_serviced < self.request_accepted) and
-            ((self.global_time < self.max_sim_time) or (self.event_queue and self.event_queue[0][0] < self.max_sim_time))):
+        while (
+            self.event_queue
+            and self.request_serviced < self.request_accepted
+            and self.event_queue[0][0] < self.max_sim_time
+        ):
             ## Add all the requests to appropriate clients
             # Pop out the event and determine the type
             event_push_time, event_type, event_items = heapq.heappop(self.event_queue)
+            self._last_event_time = event_push_time
             # print(f"Global Time {self.global_time}, Next Event Start Time: {event_push_time}, Event Type: {event_type}")
 
             if (event_type == EventType.STAGE_PUSH):
@@ -156,6 +165,7 @@ class MISTCoordinator:
                 if next_client_id == None:
                     ## First client should be determined only once the req has arrived
                     next_client_id = self._get_current_client(cur_req)
+                self._active_requests[cur_req.request_id] = cur_req
 
                 request_added_client_time = self.clients[next_client_id].current_time
                 if request_added_client_time < event_push_time:
@@ -209,6 +219,7 @@ class MISTCoordinator:
                         if req.request_finished():
                             self.request_serviced += 1
                             req.update_request_finished_time(request_client_exit_time)
+                            self._active_requests.pop(req.request_id, None)
                             self.completed_requests.append(req)
                             # print(f'Req {req.request_id} serviced')
                         else:
@@ -268,74 +279,58 @@ class MISTCoordinator:
             self._network_steps.add(t)
             heapq.heappush(self.event_queue, (t, EventType.NETWORK_STEP, None))
 
-    # TODO: Add the logic to get the client stats
     def get_global_stats(self) -> ClientMetrics:
-        sum_TTFT = 0
         total_input = 0
-        actual_output_lens = 0
-        e2e_latencies = []          # Keeps track of all the end to end latencies
-        TTFT_latencies = []          # Keeps track of all the TTFT latencies
+        output_tokens = 0
+        time_to_first_token = 0
+        requests_with_tokens = 0
+        decode_time = 0
+        decode_steps = 0
+        latest_client_time = max((client.current_time for client in self.clients), default=0)
+        latest_finished_time = max(self.global_time, self._last_event_time, latest_client_time)
 
-        request_gen_times = []
-        for client in self.clients:
-            if ClientType.PREFILL in client.client_types or ClientType.DECODE in client.client_types:
-                total_input += sum([req.input_len - req.remaining_prefill_tokens for req in client.scheduler.running])
-                actual_output_lens += sum([req.gen_tokens for req in client.scheduler.running])
-                request_gen_times.extend([req.data[j].finished_time - req.data[j].scheduled_time for req in client.scheduler.running for j in range(len(req.data))] )
-                TTFT_latencies.extend([req.data[0].finished_time - req.metrics.arrival_time for req in client.scheduler.running if len(req.data) > 0])
-        # request_gen_times = [item for sublist in request_gen_times for item in sublist]
-        for i, request in enumerate(self.completed_requests):
-            TTFT = (request.data[0].finished_time - request.metrics.arrival_time)
-            sum_TTFT += TTFT
+        # Admitted requests stay visible while they wait for a chunk or transfer.
+        for request in chain(self.completed_requests, self._active_requests.values()):
             total_input += request.input_len - request.remaining_prefill_tokens
-            if request.gen_tokens > 1:
-                actual_output_lens += request.gen_tokens
-                for j in range(1, len(request.data)):
-                    request_gen_times.append(request.data[j].finished_time - request.data[j].scheduled_time)
-            latency = request.metrics.finished_time - request.metrics.arrival_time
-            TTFT_latencies.append(TTFT)
-            e2e_latencies.append(latency)
+            output_tokens += request.gen_tokens
+            if request.data:
+                requests_with_tokens += 1
+                time_to_first_token += request.data[0].finished_time - request.metrics.arrival_time
+                for index in range(1, len(request.data)):
+                    beat = request.data[index]
+                    decode_time += beat.finished_time - beat.scheduled_time
+                decode_steps += len(request.data) - 1
 
-        num_requests = self.request_serviced
+        e2e_latencies = []
+        for request in self.completed_requests:
+            e2e_latencies.append(request.metrics.finished_time - request.metrics.arrival_time)
+            latest_finished_time = max(latest_finished_time, request.metrics.finished_time)
+
+        avg_TTFT = time_to_first_token / requests_with_tokens if requests_with_tokens else 0
+        avg_TPOT = decode_time / decode_steps if decode_steps else 0
+        per_second = 1000 / latest_finished_time if latest_finished_time > 0 else 0
+        num_requests = len(e2e_latencies)
         if num_requests:
-            avg_TTFT = sum(TTFT_latencies) / len(TTFT_latencies) if TTFT_latencies else 0
-            avg_TPOT = sum(request_gen_times) / len(request_gen_times) if request_gen_times else 0
-            interactivity = 1000/avg_TPOT if avg_TPOT > 0 else 0
-            rps = self.request_serviced / (self.global_time/1000)
-
             e2e_latencies.sort()
             T50_latency = e2e_latencies[int(0.5 * num_requests)]
             T90_latency = e2e_latencies[int(0.9 * num_requests)]
             T95_latency = e2e_latencies[int(0.95 * num_requests)]
             T99_latency = e2e_latencies[int(0.99 * num_requests)]
-
-            return ClientMetrics(
-                TTFT=avg_TTFT,
-                TPOT=avg_TPOT,
-                rps=rps,
-                T50_latency=T50_latency,
-                T90_latency=T90_latency,
-                T95_latency=T95_latency,
-                T99_latency=T99_latency,
-                interactivity=interactivity,
-                output_throughput = actual_output_lens / (self.global_time/1000),
-                total_token_throughput=(total_input + actual_output_lens) / (self.global_time/1000),
-            )
         else:
-            return ClientMetrics(
-                TTFT=0,
-                TPOT=0,
-                rps=0,
-                T50_latency=0,
-                T90_latency=0,
-                T95_latency=0,
-                T99_latency=0,
-                interactivity=0,
-                output_throughput=0,
-                total_token_throughput=0,
-            )
+            T50_latency = T90_latency = T95_latency = T99_latency = 0
 
-
+        return ClientMetrics(
+            TTFT=avg_TTFT,
+            TPOT=avg_TPOT,
+            rps=num_requests * per_second,
+            T50_latency=T50_latency,
+            T90_latency=T90_latency,
+            T95_latency=T95_latency,
+            T99_latency=T99_latency,
+            interactivity=1000 / avg_TPOT if avg_TPOT > 0 else 0,
+            output_throughput=output_tokens * per_second,
+            total_token_throughput=(total_input + output_tokens) * per_second,
+        )
 
     def get_heavy_light_split(self, client_type, req, load_type):
         def circular_left_shift(lst, indexes):

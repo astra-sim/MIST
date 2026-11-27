@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 
 from conftest import make_queue
-from mist import ClusterConfig
+from mist import ClusterConfig, Request
 from mist.Coordinator import MISTCoordinatorDisagg
 
 MODEL = "meta-llama/meta-llama-3.1-8b"
@@ -105,6 +105,25 @@ def test_astrasim_path_matches_analytical_links(tmp_path, monkeypatch):
 def test_missing_topology_file_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         _run(make_queue(rps=1, sim_time=500), astrasim_topology=str(tmp_path / "nope.yml"))
+
+
+def test_finite_run_counts_prefill_while_kv_is_in_transit(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "simulation_py_congestion_aware", _fake_backend())
+    monkeypatch.setattr(ClusterConfig, "get_chunked_time", lambda self, prefills, decodes: (10, 0))
+    topology = tmp_path / "topo.yml"
+    topology.write_text("")
+
+    coord = _run(
+        [Request(input_len=128, output_len=8)],
+        astrasim_topology=str(topology),
+        max_sim_time=10.25,
+    )
+    stats = coord.get_global_stats()
+
+    assert set(coord._in_flight) == {0}
+    assert coord.request_serviced == 0
+    assert stats.output_throughput == pytest.approx(1 / 0.01)
+    assert stats.total_token_throughput == pytest.approx(129 / 0.01)
 
 
 def test_clocks_stay_aligned_under_contention(tmp_path, monkeypatch):

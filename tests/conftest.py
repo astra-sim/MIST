@@ -22,8 +22,11 @@ def make_queue(seed=0, rps=4, sim_time=3000):
     ).request_queue
 
 
-def run_sim(queue, device="H100_GPU", batching=BatchingMethod.CHUNKED, **sched_kwargs):
-    coord = MISTCoordinator(deepcopy(queue), logging_file=None)
+def run_sim(
+    queue, device="H100_GPU", batching=BatchingMethod.CHUNKED, *,
+    max_sim_time=float("inf"), **sched_kwargs,
+):
+    coord = MISTCoordinator(deepcopy(queue), logging_file=None, max_sim_time=max_sim_time)
     types = [ClientType.PREFILL, ClientType.DECODE]
     client = LLMClient(
         model=MODEL, client_types=types,
